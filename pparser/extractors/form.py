@@ -43,7 +43,8 @@ class FormExtractor(BaseExtractor):
             r'^\s*\*\s*(.+)$',                  # * option
         ]
         
-        # Keywords that indicate questions
+        # TODO: implement all the gramatical things in more languages (initially only spanish and english)
+        # Keywords that indicate questions (for the moment only spanish and english)
         self.question_keywords = [
             'pregunta', 'question', 'cuál', 'which', 'what', 'how', 'why',
             'when', 'where', 'who', 'qué', 'cómo', 'por qué', 'cuándo',

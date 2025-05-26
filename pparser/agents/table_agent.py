@@ -83,31 +83,30 @@ class TableAnalysisAgent(BaseAgent):
         
         system_prompt = """You are an expert in data analysis and table structure. Analyze this table and provide insights about its content, structure, and purpose.
 
-Analyze:
-1. Data types in each column (numeric, text, categorical, date, etc.)
-2. Table purpose (comparison, data listing, summary, reference, etc.)
-3. Key insights or patterns in the data
-4. Suggested improvements for clarity
-5. Whether headers are descriptive enough
+                        Analyze:
+                        1. Data types in each column (numeric, text, categorical, date, etc.)
+                        2. Table purpose (comparison, data listing, summary, reference, etc.)
+                        3. Key insights or patterns in the data
+                        4. Suggested improvements for clarity
+                        5. Whether headers are descriptive enough
 
-Return your analysis in JSON format:
-{
-    "column_types": ["type1", "type2", ...],
-    "table_purpose": "description",
-    "key_insights": ["insight1", "insight2"],
-    "header_quality": "good|fair|poor",
-    "suggested_improvements": ["improvement1", "improvement2"],
-    "complexity": "simple|moderate|complex"
-}"""
+                        Return your analysis in JSON format:
+                        {
+                            "column_types": ["type1", "type2", ...],
+                            "table_purpose": "description",
+                            "key_insights": ["insight1", "insight2"],
+                            "header_quality": "good|fair|poor",
+                            "suggested_improvements": ["improvement1", "improvement2"],
+                            "complexity": "simple|moderate|complex"
+                        }"""
         
         user_content = f"""Analyze this table:
 
-HEADERS: {', '.join(headers)}
+                        HEADERS: {', '.join(headers)}
 
-TABLE CONTENT:
-{markdown[:1000]}{"..." if len(markdown) > 1000 else ""}
+                        TABLE CONTENT: {markdown[:1000]}{"..." if len(markdown) > 1000 else ""}
 
-Provide your analysis."""
+                        Provide your analysis."""
         
         messages = self._create_messages(system_prompt, user_content)
         llm_response = self._invoke_llm(messages)
@@ -128,20 +127,18 @@ Provide your analysis."""
         
         system_prompt = """You are an expert in Markdown table formatting. Improve the formatting of this table to make it more readable and properly structured.
 
-Tasks:
-1. Ensure proper column alignment
-2. Improve header clarity if needed
-3. Format numeric data consistently
-4. Ensure proper Markdown table syntax
-5. Make the table more readable
+                        Tasks:
+                        1. Ensure proper column alignment
+                        2. Improve header clarity if needed
+                        3. Format numeric data consistently
+                        4. Ensure proper Markdown table syntax
+                        5. Make the table more readable
 
-Return only the improved Markdown table, nothing else."""
+                        Return only the improved Markdown table, nothing else."""
         
         user_content = f"""Improve this table formatting:
-
-{original_markdown}
-
-Return the improved Markdown table."""
+                        {original_markdown}
+                        Return the improved Markdown table."""
         
         messages = self._create_messages(system_prompt, user_content)
         improved_markdown = self._invoke_llm(messages)
@@ -158,22 +155,22 @@ Return the improved Markdown table."""
         
         system_prompt = """Generate a brief, informative summary of this table that could be used as a caption or description in a document.
 
-The summary should:
-1. Describe what the table shows
-2. Mention key data types or categories
-3. Be concise (1-2 sentences)
-4. Be suitable for document readers
+                        The summary should:
+                        1. Describe what the table shows
+                        2. Mention key data types or categories
+                        3. Be concise (1-2 sentences)
+                        4. Be suitable for document readers
 
-Return only the summary text."""
+                        Return only the summary text."""
         
         user_content = f"""Generate a summary for this table:
 
-Headers: {', '.join(headers)}
-Dimensions: {rows} rows × {columns} columns
-Purpose: {purpose}
-Table content preview: {table_info.get('markdown', '')[:300]}
+                        Headers: {', '.join(headers)}
+                        Dimensions: {rows} rows × {columns} columns
+                        Purpose: {purpose}
+                        Table content preview: {table_info.get('markdown', '')[:300]}
 
-Provide a concise summary."""
+                        Provide a concise summary."""
         
         messages = self._create_messages(system_prompt, user_content)
         summary = self._invoke_llm(messages)

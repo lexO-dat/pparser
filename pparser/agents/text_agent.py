@@ -57,9 +57,17 @@ class TextAnalysisAgent(BaseAgent):
 Tasks:
 1. Identify and classify headings by importance level (1-6)
 2. Detect document sections and subsections
-3. Identify key structural elements like abstracts, conclusions, references
+3. Identify key structural elements:
+   - Abstract, introduction, conclusion, references
+   - Index/Table of contents
+   - Code blocks and technical content
+   - Lists (ordered, unordered, definition lists)
+   - Tables and figures
+   - Appendices
+   - Footnotes and endnotes
 4. Suggest improvements to heading hierarchy
 5. Detect any missing structural elements
+6. Identify special formatting needs (code blocks, math equations, etc.)
 
 Return your analysis in JSON format with the following structure:
 {{
@@ -67,11 +75,36 @@ Return your analysis in JSON format with the following structure:
         {{"text": "heading text", "level": 1, "type": "title|section|subsection", "line": 1}}
     ],
     "document_sections": [
-        {{"name": "section name", "type": "abstract|introduction|conclusion|references", "start_line": 1, "end_line": 10}}
+        {{
+            "name": "section name",
+            "type": "abstract|introduction|conclusion|references|index|appendix|other",
+            "start_line": 1,
+            "end_line": 10,
+            "special_formatting": ["code_block", "math_equation", "table", "figure"]
+        }}
     ],
+    "special_elements": {{
+        "code_blocks": [
+            {{"language": "python|java|etc", "start_line": 1, "end_line": 10}}
+        ],
+        "index_entries": [
+            {{"term": "term", "page": 1, "subentries": []}}
+        ],
+        "tables": [
+            {{"title": "table title", "start_line": 1, "end_line": 5}}
+        ],
+        "figures": [
+            {{"title": "figure title", "start_line": 1, "end_line": 3}}
+        ]
+    }},
     "structural_improvements": ["suggestion 1", "suggestion 2"],
     "document_type": "academic_paper|book|technical_document|form|other",
-    "reading_order": ["section1", "section2", "section3"]
+    "reading_order": ["section1", "section2", "section3"],
+    "formatting_requirements": {{
+        "code_blocks": ["language1", "language2"],
+        "math_equations": true,
+        "special_characters": ["char1", "char2"]
+    }}
 }}"""
         
         user_content = f"""Analyze this text content:

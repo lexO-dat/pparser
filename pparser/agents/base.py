@@ -1,5 +1,5 @@
 """
-Base agent class for PPARSER multiagent system
+Base agent class
 """
 
 from abc import ABC, abstractmethod
@@ -32,6 +32,7 @@ class BaseAgent(ABC):
             self.llm = None
         
         # Agent memory and state
+        # TODO: Implement a better memory management system (like using postgres or buffer memory)
         self.memory: List[BaseMessage] = []
         self.state: Dict[str, Any] = {}
     
@@ -41,7 +42,7 @@ class BaseAgent(ABC):
         pass
     
     def _create_messages(self, system_prompt: str, user_content: str) -> List[BaseMessage]:
-        """Create messages for LLM interaction"""
+        """LLM interaction Messages"""
         messages = [
             SystemMessage(content=system_prompt),
             HumanMessage(content=user_content)
@@ -49,7 +50,7 @@ class BaseAgent(ABC):
         return messages
     
     def _invoke_llm(self, messages: List[BaseMessage]) -> str:
-        """Invoke LLM with messages"""
+        """Invoke LLM"""
         try:
             response = self.llm.invoke(messages)
             return response.content
@@ -57,6 +58,7 @@ class BaseAgent(ABC):
             self.logger.error(f"LLM invocation failed for {self.name}: {e}")
             return ""
     
+    # TODO: as is written above, i have to implement a better memory system
     def add_to_memory(self, message: BaseMessage):
         """Add message to agent memory"""
         self.memory.append(message)

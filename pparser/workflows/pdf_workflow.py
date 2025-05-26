@@ -5,6 +5,8 @@ This module implements the main PDF to Markdown conversion workflow using LangGr
 to coordinate various specialized agents and extractors.
 """
 
+# TODO: i have to implement / correct the iterative markdown validation and construction 
+
 from typing import Dict, Any, List, Optional, TypedDict
 import asyncio
 from pathlib import Path
@@ -274,13 +276,31 @@ class PDFWorkflow:
         try:
             if 'formulas' in state['raw_extractions']:
                 formula_data = state['raw_extractions']['formulas']
-                # Use simplified approach for now
+                
+                # Process formulas in batches to reduce token usage
+                batch_size = 10
+                formulas = formula_data.get('formulas', [])
+                processed_formulas = []
+                
+                for i in range(0, len(formulas), batch_size):
+                    batch = formulas[i:i + batch_size]
+                    # Process batch
+                    for formula in batch:
+                        # Ensure formula has proper LaTeX formatting
+                        if 'latex' not in formula and 'content' in formula:
+                            formula['latex'] = formula['content']
+                        processed_formulas.append(formula)
+                
                 analyzed_formulas = {
-                    'items': formula_data.get('formulas', []),
-                    'metadata': {'analysis_type': 'simplified', 'count': len(formula_data.get('formulas', []))}
+                    'items': processed_formulas,
+                    'metadata': {
+                        'analysis_type': 'batch_processed',
+                        'count': len(processed_formulas),
+                        'batches': (len(formulas) + batch_size - 1) // batch_size
+                    }
                 }
                 state['processed_content']['formulas'] = analyzed_formulas
-                self.logger.info("Formula analysis completed")
+                self.logger.info(f"Formula analysis completed: {len(processed_formulas)} formulas processed")
             else:
                 self.logger.warning("No formula data found for analysis")
                 
@@ -366,68 +386,37 @@ class PDFWorkflow:
             markdown_parts.append(f"*Converted from PDF using PPARSER*")
             markdown_parts.append("")  # Empty line
             
-            self.logger.info(f"Processed content keys: {list(state['processed_content'].keys())}")
-            
-            # Create Table of Contents if we have structured content
-            toc_items = []
+            # Process content in a single pass to avoid duplicates
             content_sections = []
+            asset_sections = []
+            toc_items = []
             
             # Process text content first
             if 'text' in state['processed_content']:
                 text_content = state['processed_content']['text']
-                self.logger.info(f"Text content keys: {list(text_content.keys()) if text_content else 'None'}")
-                
-                if text_content:
-                    if 'markdown' in text_content:
-                        content_text = text_content['markdown']
-                    elif 'content' in text_content:
-                        content_text = text_content['content']
-                    else:
-                        content_text = ""
-                    
+                if text_content and ('markdown' in text_content or 'content' in text_content):
+                    content_text = text_content.get('markdown', text_content.get('content', ''))
                     if content_text:
-                        # Try to extract sections from text content
                         text_sections = self._create_text_sections(content_text)
                         content_sections.extend(text_sections)
-                        
-                        # Add to TOC
                         for section in text_sections:
                             toc_items.append(f"- [{section['title']}](#{section['anchor']})")
             
-            # Add assets sections
-            asset_sections = []
+            # Process assets in a single pass
+            asset_types = {
+                'images': ('Images', self._create_images_section),
+                'tables': ('Tables', self._create_tables_section),
+                'formulas': ('Formulas', self._create_formulas_section),
+                'forms': ('Forms', self._create_forms_section)
+            }
             
-            # Images section
-            if 'images' in state['processed_content']:
-                image_content = state['processed_content']['images']
-                if 'items' in image_content and image_content['items']:
-                    image_section = self._create_images_section(image_content['items'])
-                    asset_sections.append(image_section)
-                    toc_items.append(f"- [Images](#images)")
-            
-            # Tables section
-            if 'tables' in state['processed_content']:
-                table_content = state['processed_content']['tables']
-                if 'items' in table_content and table_content['items']:
-                    table_section = self._create_tables_section(table_content['items'])
-                    asset_sections.append(table_section)
-                    toc_items.append(f"- [Tables](#tables)")
-            
-            # Formulas section
-            if 'formulas' in state['processed_content']:
-                formula_content = state['processed_content']['formulas']
-                if 'items' in formula_content and formula_content['items']:
-                    formula_section = self._create_formulas_section(formula_content['items'])
-                    asset_sections.append(formula_section)
-                    toc_items.append(f"- [Formulas](#formulas)")
-            
-            # Forms section
-            if 'forms' in state['processed_content']:
-                form_content = state['processed_content']['forms']
-                if 'items' in form_content and form_content['items']:
-                    form_section = self._create_forms_section(form_content['items'])
-                    asset_sections.append(form_section)
-                    toc_items.append(f"- [Forms](#forms)")
+            for asset_type, (title, creator) in asset_types.items():
+                if asset_type in state['processed_content']:
+                    content = state['processed_content'][asset_type]
+                    if 'items' in content and content['items']:
+                        section = creator(content['items'])
+                        asset_sections.append(section)
+                        toc_items.append(f"- [{title}](#{title.lower()})")
             
             # Add Table of Contents if we have sections
             if toc_items:
@@ -794,13 +783,18 @@ class PDFWorkflow:
             lines.append(f"### Formula {i}")
             
             if 'latex' in formula:
-                lines.append(f"```latex")
-                lines.append(formula['latex'])
-                lines.append("```")
+                # Use proper math delimiters for inline and block formulas
+                if formula.get('type') == 'inline':
+                    lines.append(f"${formula['latex']}$")
+                else:
+                    lines.append(f"$$\n{formula['latex']}\n$$")
+                
+                # Add explanation if available
+                if formula.get('explanation'):
+                    lines.append(f"\n*{formula['explanation']}*")
             elif 'content' in formula:
-                lines.append(f"```")
-                lines.append(str(formula['content']))
-                lines.append("```")
+                # Fallback for non-LaTeX formulas
+                lines.append(f"```math\n{str(formula['content'])}\n```")
             
             lines.append("")  # Empty line between formulas
         

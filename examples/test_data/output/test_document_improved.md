@@ -1,1738 +1,209 @@
+## Table of Contents
+
+- [Introduction](#introduction)
+- [Methodology](#methodology)
+  - [Data Analysis](#data-analysis)
+- [Results](#results)
+  - [Tables and Figures](#tables-and-figures)
+  - [Formulas](#formulas)
+- [Discussion](#discussion)
+- [Conclusion](#conclusion)
+- [Appendices](#appendices)
+
 # Comprehensive Document Outline
 
+*Converted from PDF using PPARSER*
+
+## Table of Contents
+
+- [Content](#content)
+- [Images](#images)
+- [Tables](#tables)
+- [Formulas](#formulas)
+- [Forms](#forms)
+
+## Content
+
+Provided proper attribution is provided, Google hereby grants permission to reproduce the tables and figures in this paper solely for use in journalistic or scholarly works. 
+
+### Authors
+
+- Ashish Vaswani, Google Brain, avaswani@google.com
+- Noam Shazeer, Google Brain, noam@google.com
+- Niki Parmar, Google Research, nikip@google.com
+- Jakob Uszkoreit, Google Research, usz@google.com
+- Llion Jones, Google Research, llion@google.com
+- Aidan N. Gomez, University of Toronto, aidan@cs.toronto.edu
+- Łukasz Kaiser, Google Brain, lukaszkaiser@google.com
+- Illia Polosukhin, illia.polosukhin@gmail.com
+
+### Abstract
+
+The dominant sequence transduction models are based on complex recurrent or convolutional neural networks that include an encoder and a decoder. The best performing models also connect the encoder and decoder through an attention mechanism. We propose a new simple network architecture, the Transformer, based solely on attention mechanisms, dispensing with recurrence and convolutions entirely. Experiments on two machine translation tasks show these models to be superior in quality while being more parallelizable and requiring significantly less time to train. Our model achieves 28.4 BLEU on the WMT 2014 English-to-German translation task, improving over the existing best results, including ensembles, by over 2 BLEU. On the WMT 2014 English-to-French translation task, our model establishes a new single-model state-of-the-art BLEU score of 41.8 after training for 3.5 days on eight GPUs, a small fraction of the training costs of the best models from the literature. We show that the Transformer generalizes well to other tasks by applying it successfully to English constituency parsing both with large and limited training data. 
+
+*Equal contribution. Listing order is random. Jakob proposed replacing RNNs with self-attention and started the effort to evaluate this idea. Ashish, with Illia, designed and implemented the first Transformer models and has been crucially involved in every aspect of this work. Noam proposed scaled dot-product attention, multi-head attention and the parameter-free position representation and became the other person involved in nearly every detail. Niki designed, implemented, tuned and evaluated countless model variants in our original codebase and tensor2tensor. Llion also experimented with novel model variants, was responsible for our initial codebase, and efficient inference and visualizations. Lukasz and Aidan spent countless long days designing various parts of and implementing tensor2tensor, replacing our earlier codebase, greatly improving results and massively accelerating our research.*
+
+## 1 Introduction
+
+Recurrent neural networks, long short-term memory [13] and gated recurrent [7] neural networks in particular, have been firmly established as state of the art approaches in sequence modeling and transduction problems such as language modeling and machine translation [35, 2, 5]. Numerous efforts have since continued to push the boundaries of recurrent language models and encoder-decoder architectures [38, 24, 15]. 
+
+Recurrent models typically factor computation along the symbol positions of the input and output sequences. Aligning the positions to steps in computation time, they generate a sequence of hidden states \( h_t \), as a function of the previous hidden state \( h_{t-1} \) and the input for position \( t \). This inherently sequential nature precludes parallelization within training examples, which becomes critical at longer sequence lengths, as memory constraints limit batching across examples. 
+
+Recent work has achieved significant improvements in computational efficiency through factorization tricks [21] and conditional computation [32], while also improving model performance in case of the latter. The fundamental constraint of sequential computation, however, remains. 
+
+Attention mechanisms have become an integral part of compelling sequence modeling and transduction models in various tasks, allowing modeling of dependencies without regard to their distance in the input or output sequences [2, 19]. In all but a few cases [27], however, such attention mechanisms are used in conjunction with a recurrent network. 
+
+In this work we propose the Transformer, a model architecture eschewing recurrence and instead relying entirely on an attention mechanism to draw global dependencies between input and output. The Transformer allows for significantly more parallelization and can reach a new state of the art in translation quality after being trained for as little as twelve hours on eight P100 GPUs.
+
+## 2 Background
+
+The goal of reducing sequential computation also forms the foundation of the Extended Neural GPU [16], ByteNet [18] and ConvS2S [9], all of which use convolutional neural networks as basic building block, computing hidden representations in parallel for all input and output positions. In these models, the number of operations required to relate signals from two arbitrary input or output positions grows in the distance between positions, linearly for ConvS2S and logarithmically for ByteNet. This makes it more difficult to learn dependencies between distant positions [12]. 
+
+In the Transformer this is reduced to a constant number of operations, albeit at the cost of reduced effective resolution due to averaging attention-weighted positions, an effect we counteract with Multi-Head Attention as described in section 3.2. 
+
+Self-attention, sometimes called intra-attention, is an attention mechanism relating different positions of a single sequence in order to compute a representation of the sequence. Self-attention has been used successfully in a variety of tasks including reading comprehension, abstractive summarization, textual entailment and learning task-independent sentence representations [4, 27, 28, 22]. 
+
+End-to-end memory networks are based on a recurrent attention mechanism instead of sequence-aligned recurrence and have been shown to perform well on simple-language question answering and language modeling tasks [34]. To the best of our knowledge, however, the Transformer is the first transduction model relying entirely on self-attention to compute representations of its input and output without using sequence-aligned RNNs or convolution. 
+
+In the following sections, we will describe the Transformer, motivate self-attention and discuss its advantages over models such as [17, 18] and [9].
+
+## 3 Model Architecture
+
+Most competitive neural sequence transduction models have an encoder-decoder structure [5, 2, 35]. Here, the encoder maps an input sequence of symbol representations \( (x_1, ..., x_n) \) to a sequence of continuous representations \( z = (z_1, ..., z_n) \). Given \( z \), the decoder then generates an output sequence \( (y_1, ..., y_m) \) of symbols one element at a time. At each step the model is auto-regressive [10], consuming the previously generated symbols as additional input when generating the next.
+
+![The Transformer - model architecture](page_3_img_1_e7acc8c9.png)
+
+### 3.1 Encoder and Decoder Stacks
+
+**Encoder:** The encoder is composed of a stack of \( N = 6 \) identical layers. Each layer has two sub-layers. The first is a multi-head self-attention mechanism, and the second is a simple, position-wise fully connected feed-forward network. We employ a residual connection [11] around each of the two sub-layers, followed by layer normalization [1]. That is, the output of each sub-layer is 
+
+\[
+\text{LayerNorm}(x + \text{Sublayer}(x))
+\]
+
+where \( \text{Sublayer}(x) \) is the function implemented by the sub-layer itself. To facilitate these residual connections, all sub-layers in the model, as well as the embedding layers, produce outputs of dimension \( d_{\text{model}} = 512 \).
+
+**Decoder:** The decoder is also composed of a stack of \( N = 6 \) identical layers. In addition to the two sub-layers in each encoder layer, the decoder inserts a third sub-layer, which performs multi-head attention over the output of the encoder stack. Similar to the encoder, we employ residual connections around each of the sub-layers, followed by layer normalization. We also modify the self-attention sub-layer in the decoder stack to prevent positions from attending to subsequent positions. This masking, combined with the fact that the output embeddings are offset by one position, ensures that the predictions for position \( i \) can depend only on the known outputs at positions less than \( i \).
+
+### 3.2 Attention
+
+An attention function can be described as mapping a query and a set of key-value pairs to an output, where the query, keys, values, and output are all vectors. The output is computed as a weighted sum of the values, where the weight assigned to each value is computed by a compatibility function of the query with the corresponding key.
+
+#### 3.2.1 Scaled Dot-Product Attention
+
+We call our particular attention "Scaled Dot-Product Attention". The input consists of queries and keys of dimension \( d_k \), and values of dimension \( d_v \). We compute the dot products of the query with all keys, divide each by \( \sqrt{d_k} \), and apply a softmax function to obtain the weights on the values. In practice, we compute the attention function on a set of queries simultaneously, packed together into a matrix \( Q \). The keys and values are also packed together into matrices \( K \) and \( V \). We compute the matrix of outputs as:
+
+\[
+\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V
+\]
+
+The two most commonly used attention functions are additive attention [2], and dot-product (multiplicative) attention. Dot-product attention is identical to our algorithm, except for the scaling factor of \( \frac{1}{\sqrt{d_k}} \). Additive attention computes the compatibility function using a feed-forward network with a single hidden layer. While the two are similar in theoretical complexity, dot-product attention is much faster and more space-efficient in practice, since it can be implemented using highly optimized matrix multiplication code. 
+
+While for small values of \( d_k \) the two mechanisms perform similarly, additive attention outperforms dot product attention without scaling for larger values of \( d_k \) [3]. We suspect that for large values of \( d_k \), the dot products grow large in magnitude, pushing the softmax function into regions where it has extremely small gradients. To counteract this effect, we scale the dot products by \( \frac{1}{\sqrt{d_k}} \).
+
+#### 3.2.2 Multi-Head Attention
+
+Instead of performing a single attention function with \( d_{\text{model}} \)-dimensional keys, values and queries, we found it beneficial to linearly project the queries, keys and values \( h \) times with different, learned linear projections to \( d_k, d_k \) and \( d_v \) dimensions, respectively. On each of these projected versions of queries, keys and values we then perform the attention function in parallel, yielding \( d_v \)-dimensional output values. These are concatenated and once again projected, resulting in the final values, as depicted in the figure.
+
+\[
+\text{MultiHead}(Q, K, V) = \text{Concat}(\text{head}_1, ..., \text{head}_h)W_O
+\]
+
+where 
+
+\[
+\text{head}_i = \text{Attention}(QW_{Q_i}, KW_{K_i}, VW_{V_i})
+\]
+
+The projections are parameter matrices \( W_{Q_i} \in \mathbb{R}^{d_{\text{model}} \times d_k}, W_{K_i} \in \mathbb{R}^{d_{\text{model}} \times d_k}, W_{V_i} \in \mathbb{R}^{d_{\text{model}} \times d_v} \) and \( W_O \in \mathbb{R}^{hd_v \times d_{\text{model}}} \). In this work we employ \( h = 8 \) parallel attention layers, or heads. For each of these we use \( d_k = d_v = \frac{d_{\text{model}}}{h} = 64 \). Due to the reduced dimension of each head, the total computational cost is similar to that of single-head attention with full dimensionality.
+
+#### 3.2.3 Applications of Attention in our Model
+
+The Transformer uses multi-head attention in three different ways:
+
+- In "encoder-decoder attention" layers, the queries come from the previous decoder layer, and the memory keys and values come from the output of the encoder. This allows every position in the decoder to attend over all positions in the input sequence. This mimics the typical encoder-decoder attention mechanisms in sequence-to-sequence models such as [38, 2, 9].
+  
+- The encoder contains self-attention layers. In a self-attention layer all of the keys, values and queries come from the same place, in this case, the output of the previous layer in the encoder. Each position in the encoder can attend to all positions in the previous layer of the encoder.
+  
+- Similarly, self-attention layers in the decoder allow each position in the decoder to attend to all positions in the decoder up to and including that position. We need to prevent leftward information flow in the decoder to preserve the auto-regressive property. We implement this inside of scaled dot-product attention by masking out (setting to \(-\infty\)) all values in the input of the softmax which correspond to illegal connections.
+
+### 3.3 Position-wise Feed-Forward Networks
+
+In addition to attention sub-layers, each of the layers in our encoder and decoder contains a fully connected feed-forward network, which is applied to each position separately and identically. This consists of two linear transformations with a ReLU activation in between.
+
+\[
+\text{FFN}(x) = \max(0, xW_1 + b_1)W_2 + b_2
+\]
+
+While the linear transformations are the same across different positions, they use different parameters from layer to layer. Another way of describing this is as two convolutions with kernel size 1. The dimensionality of input and output is \( d_{\text{model}} = 512 \), and the inner-layer has dimensionality \( d_{ff} = 2048 \).
+
+### 3.4 Embeddings and Softmax
+
+Similarly to other sequence transduction models, we use learned embeddings to convert the input tokens and output tokens to vectors of dimension \( d_{\text{model}} \). We also use the usual learned linear transformation and softmax function to convert the decoder output to predicted next-token probabilities. In our model, we share the same weight matrix between the two embedding layers and the pre-softmax linear transformation, similar to [30]. In the embedding layers, we multiply those weights by \( \sqrt{d_{\text{model}}} \).
+
+### 3.5 Positional Encoding
+
+Since our model contains no recurrence and no convolution, in order for the model to make use of the order of the sequence, we must inject some information about the relative or absolute position of the tokens in the sequence. To this end, we add "positional encodings" to the input embeddings at the bottoms of the encoder and decoder stacks. The positional encodings have the same dimension \( d_{\text{model}} \) as the embeddings, so that the two can be summed. There are many choices of positional encodings, learned and fixed [9]. In this work, we use sine and cosine functions of different frequencies:
+
+\[
+\text{PE}(pos, 2i) = \sin\left(\frac{pos}{10000^{2i/d_{\text{model}}}}\right)
+\]
+
+\[
+\text{PE}(pos, 2i+1) = \cos\left(\frac{pos}{10000^{2i/d_{\text{model}}}}\right)
+\]
+
+where \( pos \) is the position and \( i \) is the dimension. That is, each dimension of the positional encoding corresponds to a sinusoid. The wavelengths form a geometric progression from \( 2\pi \) to \( 10000 \cdot 2\pi \). We chose this function because we hypothesized it would allow the model to easily learn to attend by relative positions, since for any fixed offset \( k \), \( \text{PE}_{pos+k} \) can be represented as a linear function of \( \text{PE}_{pos} \). 
+
+We also experimented with using learned positional embeddings [9] instead, and found that the two versions produced nearly identical results (see Table 3 row (E)). We chose the sinusoidal version because it may allow the model to extrapolate to sequence lengths longer than the ones encountered during training.
+
+## 4 Why Self-Attention
+
+In this section we compare various aspects of self-attention layers to the recurrent and convolutional layers commonly used for mapping one variable-length sequence of symbol representations \( (x_1, ..., x_n) \) to another sequence of equal length \( (z_1, ..., z_n) \), with \( x_i, z_i \in \mathbb{R}^d \), such as a hidden layer in a typical sequence transduction encoder or decoder. Motivating our use of self-attention we consider three desiderata. One is the total computational complexity per layer. Another is the amount of computation that can be parallelized, as measured by the minimum number of sequential operations required. The third is the path length between long-range dependencies in the network. Learning long-range dependencies is a key challenge in many sequence transduction tasks. One key factor affecting the ability to learn such dependencies is the length of the paths forward and backward signals have to traverse in the network. The shorter these paths between any combination of positions in the input and output sequences, the easier it is to learn long-range dependencies [12]. Hence we also compare the maximum path length between any two input and output positions in networks composed of the different layer types. 
+
+As noted in Table 1, a self-attention layer connects all positions with a constant number of sequentially executed operations, whereas a recurrent layer requires \( O(n) \) sequential operations. In terms of computational complexity, self-attention layers are faster than recurrent layers when the sequence length \( n \) is smaller than the representation dimensionality \( d \), which is most often the case with sentence representations used by state-of-the-art models in machine translations, such as word-piece [38] and byte-pair [31] representations. 
+
+To improve computational performance for tasks involving very long sequences, self-attention could be restricted to considering only a neighborhood of size \( r \) in the input sequence centered around the respective output position. This would increase the maximum path length to \( O(n/r) \). We p
+
+
+# Comprehensive Document Outline
 
 ## Introduction
 
-# test_document
 *Converted from PDF using PPARSER*
 
-## Table of Contents
+### Table of Contents
 - [Content](#content)
 - [Images](#images)
 - [Tables](#tables)
 - [Formulas](#formulas)
 - [Forms](#forms)
 
-## Content
-See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper  April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS 138 READS 4,160 3 authors: Stefan Uhlich University of Stuttgart 67PUBLICATIONS1,229CITATIONS SEE PROFILE Franck Giron Sony Europe B.V., Zwg. Deutschland 8PUBLICATIONS380CITATIONS SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175PUBLICATIONS2,294CITATIONS SEE PROFILE All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file.
-DEEP NEURAL NETWORK BASED INSTRUMENT EXTRACTION FROM MUSIC Stefan Uhlich1, Franck Giron1and Yuki Mitsufuji2 1 Sony European Technology Center (EuTEC), Stuttgart, Germany 2 Sony Corporation, Audio Technology Development Department, Tokyo, Japan ABSTRACT This paper deals with the extraction of an instrument from music by using a deep neural network. As prior information, we only as- sume to know the instrument types that are present in the mixture and, using this information, we generate the training data from a database with solo instrument performances. The neural network is built up from rectiﬁed linear units where each hidden layer has the same number of nodes as the output layer. This allows a least squares initialization of the layer weights and speeds up the training of the network considerably compared to a traditional random initializa- tion. We give results for two mixtures, each consisting of three in- struments, and evaluate the extraction performance using BSS Eval for a varying number of hidden layers. Index Terms— Deep neural network (DNN), Instrument extrac- tion, Blind source separation (BSS) 1. INTRODUCTION In this paper, we study the extraction of a target instrument s(n) ∈R from an instantaneous, monaural music mixture x(n) ∈R, i.e., of a mixture that can be written as x(n) = s(n) + M X i=1 vi(n), (1) where vi(n) is the time signal of the ith background instrument and the mixture consists thus in a total of M +1 instruments. From x(n) we want to extract an estimate ˆs(n) of the target instrument s(n) and, therefore, we can see instrument extraction as a special case of the general blind source separation (BSS) problem [1, 2]. Various applications require such an estimate ˆs(n) ranging from Karaoke systems which use a separation into a instruments and a vocal track, see [3, 4], to upmixing where one tries to obtain a multi-channel version of the monaural mixture x(n), see [5,6]. We propose a deep neural network (DNN) for the extraction of the target instrument s(n) from x(n) as DNNs have proved to work very well in various applications and have gained a lot of interest in the last years, especially for classiﬁcation tasks in image process- ing [7, 8] and for speech recognition [9]. We use the DNN in the frequency domain to estimate a target instrument from the mixture, i.e., we train the network such that we can think of it as a “denoiser” which converts the “noisy” mixture spectrogram to the “clean” in- strument spectrogram. For the training of the network, we only as- sume to know the instrument types of the target instrument s(n) and of the other background instruments v1(n), . . . , vM(n), for exam- ple that we want to extract a piano from a mixture with a violin and a horn. This is in contrast to other proposed DNN approaches for BSS of music which are supervised in the sense that they assume to have more knowledge about the signals [10–12]. Huang et. al. used in [11, 12] a deep (recurrent) neural network for the separa- tion of two sources where the neural network is extended by a ﬁnal softmask layer to extract the source estimates and it is trained using a discriminative cost function that also tries to decrease the interfer- ence by other sources. Whereas they only know the type of the target instrument (in their case: singing voice) in [12], they assume that the background is one of 110 known karaoke songs. In contrast, we only know the instrument types that appear in the mixture and, hence, we have to use a large instrument database with solo performances from various musicians and instruments. From this database, we generate the training data that allows us to generalize to new mixtures and this instrument database with the training data generation is thus a integral part of our DNN architecture. A second contribution of the paper is the efﬁcient training of the DNN: We propose a network architecture where each hidden rectiﬁed linear unit (ReLU) layer has the same number of nodes as the output layer. This allows a least squares initialization of the network weights of each layer and, using it as starting point for the limited-memory BFGS (L-BFGS) optimizer, yields a quicker convergence to good network weights. Additionally, we noticed that this initialization often results in ﬁnal network weights which have a smaller training error than if we start the training from randomly initialized weights as we ﬁnd better local minima. The remainder of this paper is organized as follows: In Sec. 2 we describe in detail the DNN based instrument extraction where in particular Sec. 2.1 explains the network structure, Sec. 2.2 shows the generation of the training data and Sec. 2.3 details the layer-wise training procedure. In Sec. 3, we give results for two music mixtures, each consisting of three instruments, before we conclude this paper in Sec. 4 where we summarize our work and give an outlook of future steps. The following notation is used throughout this paper: x denotes a column vector and X a matrix where in particular I is the identity matrix. The matrix transpose and Euclidean norm are denoted by (.)Tand ∥.∥, respectively. Furthermore, max (x, y) is the element- wise maximum operation between x and y, and |x| returns a vector with the element-wise magnitude values of x. 2. DNN BASED INSTRUMENT EXTRACTION 2.1. General Network Structure We will explain now the proposed DNN approach for extracting the target instrument s(n) from the mixture x(n), which is also depicted in Fig. 1. The extraction is done in the frequency domain and it consists of the following three steps: (a) Feature vector generation: We use a short-time Fourier trans- form (STFT) with (possibly overlapping) rectangular windows to transform the mixture signal x(n) into the frequency domain. From this frequency representation, we build a feature vector1 x ∈R(2C+1)Lby stacking the magnitude values of the current frame and the C preceding/succeeding frames where L gives the number of magnitude values per frame. The motivation for using also the 2C neighboring frames is to provide the DNN with tem- poral context that allows it to better extract the target instrument. Please note that these context frames are chosen such that they are 1For convenience, we use in the following a simpliﬁed notation and drop the frame index for x, xk, s, ˆx and γ. 2135 978-1-4673-6997-8/15/$31.00 2015 IEEE ICASSP 2015
-Mixture x(n) ... STFT ... Magnitude STFT frames of x(n) DNN input x ∈R(2C+1)L normalized by γ W1, b1 W2, b2    WK, bK DNN with K ReLU layers DNN output ˆs ∈RL rescaled with γ ... Magnitude STFT frames of ˆs(n) ISTFT ... Recovered instrument ˆs(n) Fig. 1: Instrument extraction using a deep neural network non-overlapping2. Finally, the input vector x is normalized by a scalar γ > 0 in order to make it independent of different amplitude levels of the mixture x(n) where γ is the average Euclidean norm of the 2C + 1 magnitude frames in x. (b) DNN instrument extraction: In a second step, the normalized STFT amplitude vector x is fed to a DNN, which consists of K layers with rectiﬁed linear units (ReLU), i.e., we have xk+1 = max (Wkxk + bk, 0) , k = 1, . . . , K (2) where xk denotes the input to the kth layer and in particular x1 is the DNN input x and xK+1 the DNN output ˆs. Each ReLU layer has L nodes and the network weights {Wk, bk}k=1,...,K are trained such that the DNN outputs an estimate ˆs of the magnitude frame s ∈RL of the target instrument from the mixture vector x. We can thus think of the DNN performing a denoising of the “noisy” mixture input. DNNs with ReLU activation functions have shown very good results, see for example [13, 14], and, as each layer has L hidden units, this activation function will allow us to use a layer-wise least squares initialization as will be shown in Sec. 2.3. (c) Reconstruction of the instrument: Using the phase of the original mixture STFT and multiplying each DNN output ˆs with the energy normalization γ that was applied to the corresponding input vector, we obtain an estimate of the STFT of the target instrument s(n), which we convert back into the time domain using an inverse STFT [15]. Note that the DNN outputs ˆs, i.e., the magnitude frames of the target instrument, will be overlapping as shown in Fig. 1 if the STFT in the ﬁrst step (a) was also using overlapping windows. Please refer to [15] for the ISTFT in this case. 2.2. Training Data Generation In order to train the weights {W1, b1}, . . . , {WK, bK} of the DNN, we need a training set {x(p), s(p)}p=1,...,P of P input/target pairs where x(p)∈R(2C+1)Lis a magnitude vector of the mixture with C preceding/succeeding frames and s(p)∈RLthe corre- sponding magnitude vector of the target instrument that we want to extract. In general, there are several possibilities to generate the required material for the DNN training, which differ in the prior knowledge that we have3: For the target instrument s(n), we either only know the instrument type (e.g., piano) or we have recordings from it. For the background instruments vi(n), we either have no knowledge, we know the instrument types that occur in the mixture or we even have 2E.g., if the STFT uses a overlap of 50%, then we only take every second frame to build the feature vector x. 3Beside the discussed cases, there is also the possibility that we have knowledge about the melody of the target instrument, see for example [16]. Instrument Number of ﬁles Material length (b= Variations) Bassoon 18 1.44 hours Cello 6 1.88 hours Clarinet 14 1.15 hours Horn 14 0.82 hours Piano 89 6.12 hours Saxophone 19 1.16 hours Trumpet 16 0.38 hours Viola 13 1.61 hours Violin 12 5.60 hours Table 1: Instrument database recordings of the particular instruments that occur in the mixture. The easiest case is when we have recordings of the instrument that we want to extract and of those that occur as background in the mix- ture. The most difﬁcult case is when we only know the type of the instrument that we want to extract and do not have any knowledge about the background instruments that will appear in the mixture. In this paper, we assume that we know the instrument types of the tar- get and background, e.g., we know that we want to extract a piano from a mixture with a horn and a violin. Using this prior knowl- edge is reasonable since for many songs, we either have metadata which provides information about the instruments that occur or, in case this information is missing, could be provided by the user. As we only know the instrument types that appear in the mixture, we built a musical instrument database, see Table 1 for the details. The music pieces are stored in the free lossless audio codec (FLAC) for- mat with a sampling rate of 48kHz and contain solo performances of the instruments. For each instrument type we have several ﬁles stemming from different musicians with different instruments play- ing classical masterpieces. These variations are important as we only know the instrument types and, hence, the DNN should generalize well to new instruments of the same type. For the DNN training, we ﬁrst load from the instrument database all audio ﬁles of the instruments that occur in the mixture and resam- ple them to a lower DNN system sampling rate, where the sampling rate is chosen such that the computational complexity of the total DNN system is reduced. In a second step, we convert all signals into the frequency domain using a STFT and randomly sample from the target and background instruments P complex-valued STFT vectors n ˜s(1), . . . ,˜s(P )o and n ˜v(1) i , . . . , ˜v(P ) i o with i = 1, . . . , M where ˜s(p)∈C(2C+1)Land ˜v(p) i ∈C(2C+1)L, i.e., they also contain the 2C neighboring frames. These are now combined to form the DNN input/targets, i.e., x(p)= 1 γ(p) α(p)˜s(p) + M X i=1 α(p) i ˜v(p) i , (3a) 2136
-s(p)=α(p) γ(p) S ˜s(p) , (3b) where γ(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in α(p)˜s(p) + PM i=1α(p) i ˜v(p) i and S ∈RL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0 . The scalars α(p), α(p) 1, . . . , α(p) Mdenote the random amplitudes of each instru- ment which stem from a uniform distribution with support [0.01, 1]. The normalization γ(p)is used to yield a DNN input that is inde- pendent of different amplitude levels of the mixture. Please note, however, that each instrument inside the mixture has a different amplitude α(p), α(p) 1, . . . , α(p) M, i.e., the DNN learns to extract the target instrument even if it has a varying amplitude compared to the background instruments. 2.3. DNN Training Using the dataset that we generated as outlined above, we can learn the network weights such that the sum-of-squared errors (SSE) be- tween the P targets s(p)and the DNN outputs ˆs(p)is minimized4. Due to the special network structure and the use of ReLU (cf. Sec. 2.1), we can perform a layer-wise training of the DNN. Each time a new layer is added, we ﬁrst initialize the weights using least squares estimates of Wk and bk by neglecting the nonlinear rectiﬁer function. As the target vectors s(p)are non-negative, we know that the SSE after adding the ReLU activation function can not increase and, hence, using the least-squares solution as initialization results in a good starting point for the L-BFGS solver that we then use. In the following, we will now describe in more details the two steps that we perform if a new layer is added: (a) Weight initialization: For the kth layer, we solve the optimization problem {Winit k, binit k} = arg min Wk,bk P X p=1 s(p) −  Wkx(p) k + bk  2 (4) where x(p) k denotes either the pth DNN input for k = 1 or the output of the (k −1)th layer if k > 1. Using (4), we choose the initial weights of the network such that they are the optimal linear least squares reconstruction of the targets {s(p)}p=1,...,P from the fea- tures {x(p) k}p=1,...,P . As we know that all elements of the target vector s(p)are non-negative, it is obvious that the total error can not increase by adding the ReLU activation function and, therefore, this initialization is a good starting point for the iterative training in step (b). The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k. (b) L-BFGS training: Starting from the initialization (a), we use a L-BFGS training with the SSE cost function to update the complete network, i.e., to update {W1, b1}, . . ., {Wk, bk}. 4We also tested the weighted Euclidean distance [19] as it showed good results for speech enhancement. However, we could not see an improvement and therefore use the SSE cost function in the following. These two steps are done K times in order to result in a network with K ReLU layers. Finally, after adding all layers, we do a ﬁne tuning of the complete network, where we again use L-BFGS. Using this procedure, we train the DNN as a denoising network as each layer, when it is added to the network, tries to recover the original targets s(p)from the output of the previous layer. This is similar to stacked denoising autoencoders, see [20, 21]. In our ex- periments, we have noticed that using the least squares initialization is advantageous with respect to the following two aspects if com- pared to a random initialization: First, it reduces the training time for the network considerably as we start the L-BFGS optimizer from a good initial value and, second, we found that we do not have the problem of converging to poor local minima which was sometimes the case for the random initialization. In the next section, we will show the beneﬁt of using the proposed initialization. 3. SEPARATION RESULTS In the following, we will now give results for the proposed DNN ap- proach. We consider two monaural music mixtures from the TRIOS dataset [22], each composed of three instruments: the “Brahms” trio consisting of a horn, a piano and a violin and the “Lussier” trio with a bassoon, a piano and a trumpet. We use the following settings for our experiments: The DNN system sampling rate (cf. Sec. 2.2) was chosen to be 32kHz which is a compromise between the audio quality of the extracted instru- ment and the DNN training time. For each frame, we have L = 513 magnitude values and we augment the input vector by C = 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN. Hence, one DNN input vector x has a length of (2C + 1)L = 3591 elements and corresponds to 224 milliseconds of the mixture signal. For the training, we use P = 106samples and the gen- erated training material has thus a length of 62.2 hours. During the layerwise training, we use 600 L-BFGS iterations for each new layer and the ﬁnal ﬁne tuning consists of 3000 additional L-BFGS iterations for the complete network such that in total we execute 5  600 + 3000 = 6000 L-BFGS iterations. Table 2 shows the BSS Eval values [23], i.e., the signal-to- distortion ratio (SDR), signal-to-interference ratio (SIR) and signal- to-artifact ratio (SAR) values after the addition of each ReLU layer. Besides the raw DNN outputs, we also give the BSS Eval values if we use a Wiener ﬁlter to combine the DNN outputs of the three instruments. This additional post-processing step allows an en- hancement of the source separation results since, from the raw DNN outputs, it computes for each instrument a softmask and applies it to the original mixture spectrogram. Looking at the results in Table 2, we can see that there is a noticeable improvement when adding the ﬁrst three layers but the difference becomes smaller for additional layers. For “Brahms”, the best results are obtained after adding all ﬁve layers and performing the ﬁnal ﬁne tuning. This is different for “Lussier”: For the trumpet, we can see that the network is starting to overﬁt to the training set when adding more than three layers as the SDR/SIR values start to decrease. The problem is the limited amount of material for the trumpet (22.5 minutes of solo performances, see Table 1), which is too small. Interestingly, also the DNNs for the other two instruments start to overﬁt which is probably also due to the trumpet in the mixture. From the results we can conclude that having sufﬁcient material for each instrument is vital if only the instrument type is known since only this ensures a good source separation quality and avoids overﬁtting. Table 3 shows for comparison the BSS Eval results for three unsupervised NMF based source separation approaches: • “MFCC kmeans [17]”: This approach uses a Mel ﬁlter bank of size 30 which is applied to the frequency basis vectors of the NMF decomposition in order to compute MFCCs. These are 2137
-Instrument Output After 1st layer After 2nd layer After 3rd layer After 4th layer After 5th layer After ﬁne tuning SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn Raw output 3.30 4.79 9.93 5.15 8.19 8.73 5.29 8.50 8.69 5.38 8.66 8.69 5.53 9.19 8.47 5.70 9.57 8.44 WF output 4.05 5.63 10.25 6.36 10.20 9.08 6.51 10.81 8.87 6.58 10.99 8.87 6.71 11.44 8.79 6.80 11.68 8.79 Piano Raw output 0.85 1.93 9.58 2.34 4.37 7.97 3.16 6.60 6.64 3.26 6.61 6.82 3.34 6.86 6.71 3.47 7.34 6.51 WF output 2.62 4.54 8.41 4.13 7.53 7.49 4.36 9.07 6.66 4.40 9.13 6.67 4.47 9.41 6.62 4.68 10.13 6.54 Violin Raw output −0.23 1.88 6.11 3.06 9.52 4.63 3.49 9.21 5.33 3.50 9.23 5.34 3.57 9.44 5.33 3.90 10.34 5.41 WF output 3.62 8.57 5.86 5.27 14.10 6.05 6.04 15.19 6.74 6.08 15.30 6.76 6.02 15.36 6.68 6.11 15.60 6.75 Lussier Bassoon Raw output 3.05 5.48 7.82 3.47 6.51 7.32 3.62 7.00 7.07 3.68 7.14 7.04 3.72 7.31 6.96 3.39 7.08 6.60 WF output 4.38 7.55 7.94 4.40 9.38 6.53 4.36 9.71 6.30 4.42 9.75 6.36 4.34 9.75 6.26 3.92 9.37 5.85 Piano Raw output 1.57 3.30 8.08 1.69 4.06 6.90 1.87 4.21 7.08 1.94 4.31 7.06 1.93 4.38 6.92 1.97 4.65 6.61 WF output 3.12 6.07 7.14 3.33 6.60 6.95 3.23 6.44 6.94 3.32 6.64 6.89 3.27 6.69 6.75 2.99 6.64 6.29 Trumpet Raw output 5.01 9.37 7.47 6.28 11.26 8.25 6.61 11.67 8.51 6.56 11.54 8.52 6.55 11.57 8.49 6.38 11.49 8.27 WF output 6.00 10.18 8.49 7.14 12.86 8.71 7.38 13.55 8.77 7.23 13.43 8.62 7.22 13.49 8.58 7.23 13.54 8.57 Table 2: BSS Eval results for DNN instrument extraction (“Brahms” and “Lussier” trio, all values are given in dB) Instrument MFCC kmeans [17] Mel NMF [17] Shifted-NMF [18] DNN with WF SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn 3.87 5.76 9.41 4.17 5.83 10.17 2.95 3.34 15.20 6.80 11.68 8.79 Piano 3.30 4.42 10.76 −0.10 0.21 14.39 3.78 5.59 9.50 4.68 10.13 6.54 Violin −8.35 −7.89 10.21 9.69 19.79 10.19 7.66 10.96 10.74 6.11 15.60 6.75 Average −0.39 0.76 10.13 4.59 8.61 11.58 4.80 6.63 11.81 5.86 12.47 7.36 Lussier Bassoon 1.85 11.67 2.61 0.15 0.75 11.72 −0.83 −0.60 15.43 3.92 9.37 5.85 Piano 4.66 6.28 10.64 4.56 8.00 7.83 2.54 5.14 7.16 2.99 6.64 6.29 Trumpet −1.73 −1.29 12.18 8.46 18.12 9.05 6.57 7.39 14.95 7.23 13.54 8.57 Average 1.59 5.55 8.48 4.39 8.96 9.53 2.76 3.98 12.51 4.71 9.85 6.90 Table 3: Comparison of BSS Eval results (all values are given in dB) then clustered via kmeans. For the Mel ﬁlter bank, we use the implementation [24] of [25]. • “Mel NMF [17]”: This approach also applies a Mel ﬁlter bank of size 30 to the original frequency basis vectors and uses a sec- ond NMF to perform the clustering. • “Shifted-NMF [18]”: For this approach, we use a constant Q transform matrix with minimal frequency 55 Hz and 24 fre- quency bins per octave. The shifted-NMF decomposition is al- lowed to use a maximum of 24 shifts. The constant Q transform source code was kindly provided by D. FitzGerald and we use the Tensor toolbox [26,27] for the shifted-NMF implementation. The best SDR values in Table 3 are emphasized in bold face and we can observe that, although our DNN approach not always gives the best individual SDR per instrument, it has the best average SDR for both mixtures since it is capable of extracting three sources with similar quality. This is not the case for the NMF approaches which have one instrument with a low SIR value, i.e., one instrument that is not well separated from the others.5 In order to see the beneﬁt of the least squares initialization from Sec. 2.3 we show in Fig. 2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec. 2.2. The denominator of J gives the SSE of a baseline system where the DNN is perform- ing an identity transform. From Fig. 2 we can see that the error is signiﬁcantly decreased whenever a new layer is added as the error J exhibits downward “jumps”. These “jumps” are due to the least squares initialization of the network weights. For example, consider the training error in Fig. 2 of the network that extracts the piano: When the ﬁrst layer is added, we have an initial error of J = 0.23, which means that, using the least squares initialization from Sec. 2.3, we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1 = 0. Would we have used the 5Please note that the considered NMF approaches are only assuming to know the number of sources, i.e., they use less prior knowledge than our DNN approach. We also tried the supervised NMF approach from [28] where the frequency basis vectors are pre-trained on our instrument database. How- ever, this supervised NMF approach resulted in signiﬁcant worse SDR values as the learned frequency bases for the instruments are correlated which intro- duces interference. 600 1200 1800 2400 3000 6000 0.08 0.1 0.12 0.14 0.16 0.18 0.2 0.22 Number of L−BFGS iterations Normalized training error J 2nd layer added 3rd layer added 4th layer added 5th layer added Start fine tuning Piano Horn Violin Fig. 2: Evolution of training error for “Brahms” baseline initialization, then a simulation showed that it would have taken us 980 additional L-BFGS iterations to reach the error value of the least squares initialization. These L-BFGS iterations can be saved and, therefore, we converge much faster to a network with a good instrument extraction performance. 4. CONCLUSIONS AND FUTURE WORK In this paper, we used a deep neural network for the extraction of an instrument from music. Using only the knowledge of the instrument types, we generated the training data from a database with solo in- strument performances and the network is trained layer-wise with a least-squares initialization of the weights. During our experiments, we noticed that the material length and quality of the solo performances is important as only sufﬁcient ma- terial allows the neural network to generalize to new, i.e., before unseen, instruments. We therefore plan to incorporate the “RWC Music Instrument Sounds” database [29] as it contains high quality samples from many instruments. Furthermore, our data generation process in Sec. 2.2 currently does not exploit music theory when generating the mixtures and we think that, taking such knowledge into account, should generate training data that is better suited for the instrument extraction task. 2138
-5. REFERENCES [1] P. Comon and C. Jutten, Eds., Handbook of Blind Source Sep- aration: Independent Component Analysis and Applications, Academic Press, 2010. [2] G. R. Naik and W. Wang, Eds., Blind Source Separation: Advances in Theory, Algorithms and Applications, Springer, 2014. [3] Z. Raﬁi and B. Pardo, “Repeating pattern extraction technique (REPET): A simple method for music/voice separation,” IEEE Transactions on Audio, Speech, and Language Processing, vol. 21, no. 1, pp. 73–84, 2013. [4] J.-L. Durrieu, B. David, and G. Richard, “A musically moti- vated mid-level representation for pitch estimation and musical audio source separation,” IEEE Journal on Selected Topics on Signal Processing, vol. 5, pp. 1180–1191, 2011. [5] D. FitzGerald, “Upmixing from mono - a source separation ap- proach,” Proc. 17th International Conference on Digital Signal Processing, 2011. [6] D. FitzGerald, “The good vibrations problem,” 134th AES Convention, e-brief, 2013. [7] A. Krizhevsky, I. Sutskever, and G. E. Hinton, “Imagenet clas- siﬁcation with deep convolutional neural networks,” in Ad- vances in neural information processing systems, 2012, pp. 1097–1105. [8] C. Farabet, C. Couprie, L. Najman, and Y. LeCun, “Learning hierarchical features for scene labeling,” IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 35, no. 8, pp. 1915–1929, 2013. [9] G. Hinton, L. Deng, D. Yu, G. E. Dahl, A.-R. Mohamed, N. Jaitly, A. Senior, V. Vanhoucke, P. Nguyen, T. N. Sainath, et al., “Deep neural networks for acoustic modeling in speech recognition: The shared views of four research groups,” IEEE Signal Processing Magazine, vol. 29, no. 6, pp. 82–97, 2012. [10] E. M. Grais, M. U. Sen, and H. Erdogan, “Deep neu- ral networks for single channel source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Process- ing (ICASSP), pp. 3734–3738, 2014. [11] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Deep learning for monaural speech sepa- ration,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 1562–1566, 2014. [12] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Singing-voice separation from monaural recordings using deep recurrent neural networks,” Interna- tional Society for Music Information Retrieval Conference (ISMIR), 2014. [13] X. Glorot, A. Bordes, and Y. Bengio, “Deep sparse rectiﬁer networks,” Proceedings of the 14th International Conference on Artiﬁcial Intelligence and Statistics, vol. 15, pp. 315–323, 2011. [14] M. D. Zeiler, M. Ranzato, R. Monga, M. Mao, K. Yang, Q. V. Le, P. Nguyen, A. Senior, V. Vanhoucke, J. Dean, et al., “On rectiﬁed linear units for speech processing,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 3517–3521, 2013. [15] B. Yang, “A study of inverse short-time Fourier transform,” Proc. IEEE Conference on Acoustics, Speech, and Signal Pro- cessing (ICASSP), pp. 3541–3544, 2008. [16] P. Smaragdis and G. J. Mysore, “Separation by “humming”: User-guided sound extraction from monophonic mixtures,” IEEE Workshop on Applications of Signal Processing to Au- dio and Acoustics, pp. 69–72, 2009. [17] M. Spiertz and V. Gnann, “Source-ﬁlter based clustering for monaural blind source separation,” Proc. Int. Conference on Digital Audio Effects, 2009. [18] R. Jaiswal, D. FitzGerald, D. Barry, E. Coyle, and S. Rickard, “Clustering NMF basis functions using shifted NMF for monaural sound source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 245– 248, 2011. [19] P. C. Loizou, “Speech enhancement based on perceptually mo- tivated Bayesian estimators of the magnitude spectrum,” IEEE Transactions on Speech and Audio Processing, vol. 13, no. 5, pp. 857–869, 2005. [20] P. Vincent, H. Larochelle, Y. Bengio, and P.-A. Manzagol, “Ex- tracting and composing robust features with denoising autoen- coders,” Proceedings of the International Conference on Ma- chine Learning, pp. 1096–1103, 2008. [21] M. Chen, Z. Xu, K. Weinberger, and F. Sha, “Marginalized denoising autoencoders for domain adaptation,” Proceedings of the International Conference on Machine Learning, 2012. [22] J. Fritsch, “High quality musical audio source separation,” Master’s Thesis, UPMC / IRCAM / Telecom ParisTech, 2012. [23] E. Vincent, R. Gribonval, and C. Fevotte, “Performance mea- surement in blind audio source separation,” IEEE Transactions on Audio, Speech and Language Processing, vol. 14, no. 4, pp. 1462–1469, 2006. [24] P. Brady, “Matlab Mel ﬁlter implementation,” http://www.mathworks.com/matlabcentral/ fileexchange/23179-melfilter, 2014, [Online]. [25] F. Zheng, G. Zhang, and Z. Song, “Comparison of different implementations of MFCC,” Journal of Computer Science and Technology, vol. 16, no. 6, pp. 582–589, September 2001. [26] B. W. Bader and T. G. Kolda, “MATLAB tensor toolbox version 2.5,” http://www.sandia.gov/˜tgkolda/ TensorToolbox/, January 2012, [Online]. [27] B. W. Bader and T. G. Kolda, “Algorithm 862: MATLAB ten- sor classes for fast algorithm prototyping,” ACM Transactions on Mathematical Software, vol. 32, no. 4, pp. 635–653, De- cember 2006. [28] E. M. Grais and H. Erdogan, “Single channel speech music separation using nonnegative matrix factorization and spectral mask,” Digital Signal Processing (DSP), 2011 17th Interna- tional Conference on IEEE, pp. 1–6, 2011. [29] M. Goto, H. Hashiguchi, T. Nishimura, and R. Oka, “RWC Music Database: Music Genre Database and Musical Instru- ment Sound Database,” Proc. of the International Conference on Music Information Retrieval (ISMIR), pp. 229–230, 2003. 2139 View publication stats
-
-## Images
-
-### Image 1
-**Description:** small rectangular grayscale image (64x64)
-![Image 1](page_1_img_1_0f58f9aa.png)
-**Dimensions:** 64x64
-
-### Image 2
-**Description:** small rectangular color image (64x64)
-![Image 2](page_1_img_2_87e4f64c.png)
-**Dimensions:** 64x64
-
-### Image 3
-**Description:** small rectangular color image (64x64)
-![Image 3](page_1_img_3_1be6f0da.png)
-**Dimensions:** 64x64
-
-
-## Tables
-
-### Table 1
-| See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper · April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS READS 138 4,160 3 authors: Stefan Uhlich Franck Giron University of Stuttgart Sony Europe B.V., Zwg. Deutschland 67 PUBLICATIONS 1,229 CITATIONS 8 PUBLICATIONS 380 CITATIONS SEE PROFILE SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175 PUBLICATIONS 2,294 CITATIONS SEE PROFILE |  |
-| --- | --- |
-| All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file. |  |
-
-### Table 2
-| Instrument | Numberoffiles (=bVariations) | Materiallength |
-| --- | --- | --- |
-| Bassoon Cello Clarinet Horn Piano Saxophone Trumpet Viola Violin | 18 6 14 14 89 19 16 13 12 | 1.44hours 1.88hours 1.15hours 0.82hours 6.12hours 1.16hours 0.38hours 1.61hours 5.60hours |
-
-### Table 3
-| Instrument Output | After1stlayer SDR SIR SAR | After2ndlayer SDR SIR SAR | After3rdlayer SDR SIR SAR | After4thlayer SDR SIR SAR | After5thlayer SDR SIR SAR | Afterfinetuning SDR SIR SAR |
-| --- | --- | --- | --- | --- | --- | --- |
-| Rawoutput Horn WFoutput smharB Rawoutput Piano WFoutput Rawoutput Violin WFoutput | 3.30 4.79 9.93 4.05 5.63 10.25 | 5.15 8.19 8.73 6.36 10.20 9.08 | 5.29 8.50 8.69 6.51 10.81 8.87 | 5.38 8.66 8.69 6.58 10.99 8.87 | 5.53 9.19 8.47 6.71 11.44 8.79 | 5.70 9.57 8.44 6.80 11.68 8.79 |
-|  | 0.85 1.93 9.58 2.62 4.54 8.41 | 2.34 4.37 7.97 4.13 7.53 7.49 | 3.16 6.60 6.64 4.36 9.07 6.66 | 3.26 6.61 6.82 4.40 9.13 6.67 | 3.34 6.86 6.71 4.47 9.41 6.62 | 3.47 7.34 6.51 4.68 10.13 6.54 |
-|  | −0.23 1.88 6.11 3.62 8.57 5.86 | 3.06 9.52 4.63 5.27 14.10 6.05 | 3.49 9.21 5.33 6.04 15.19 6.74 | 3.50 9.23 5.34 6.08 15.30 6.76 | 3.57 9.44 5.33 6.02 15.36 6.68 | 3.90 10.34 5.41 6.11 15.60 6.75 |
-| Rawoutput Bassoon WFoutput reissuL Rawoutput Piano WFoutput Rawoutput Trumpet WFoutput | 3.05 5.48 7.82 4.38 7.55 7.94 | 3.47 6.51 7.32 4.40 9.38 6.53 | 3.62 7.00 7.07 4.36 9.71 6.30 | 3.68 7.14 7.04 4.42 9.75 6.36 | 3.72 7.31 6.96 4.34 9.75 6.26 | 3.39 7.08 6.60 3.92 9.37 5.85 |
-|  | 1.57 3.30 8.08 3.12 6.07 7.14 | 1.69 4.06 6.90 3.33 6.60 6.95 | 1.87 4.21 7.08 3.23 6.44 6.94 | 1.94 4.31 7.06 3.32 6.64 6.89 | 1.93 4.38 6.92 3.27 6.69 6.75 | 1.97 4.65 6.61 2.99 6.64 6.29 |
-|  | 5.01 9.37 7.47 6.00 10.18 8.49 | 6.28 11.26 8.25 7.14 12.86 8.71 | 6.61 11.67 8.51 7.38 13.55 8.77 | 6.56 11.54 8.52 7.23 13.43 8.62 | 6.55 11.57 8.49 7.22 13.49 8.58 | 6.38 11.49 8.27 7.23 13.54 8.57 |
-
-### Table 4
-| Instrument | MFCCkmeans[17] SDR SIR SAR | MelNMF[17] SDR SIR SAR | Shifted-NMF[18] SDR SIR SAR | DNNwithWF SDR SIR SAR |
-| --- | --- | --- | --- | --- |
-| Horn smharB Piano Violin Average | 3.87 5.76 9.41 3.30 4.42 10.76 −8.35 −7.89 10.21 | 4.17 5.83 10.17 −0.10 0.21 14.39 9.69 19.79 10.19 | 2.95 3.34 15.20 3.78 5.59 9.50 7.66 10.96 10.74 | 6.80 11.68 8.79 4.68 10.13 6.54 6.11 15.60 6.75 |
-|  | −0.39 0.76 10.13 | 4.59 8.61 11.58 | 4.80 6.63 11.81 | 5.86 12.47 7.36 |
-| Bassoon reissuL Piano Trumpet Average | 1.85 11.67 2.61 4.66 6.28 10.64 −1.73 −1.29 12.18 | 0.15 0.75 11.72 4.56 8.00 7.83 8.46 18.12 9.05 | −0.83 −0.60 15.43 2.54 5.14 7.16 6.57 7.39 14.95 | 3.92 9.37 5.85 2.99 6.64 6.29 7.23 13.54 8.57 |
-|  | 1.59 5.55 8.48 | 4.39 8.96 9.53 | 2.76 3.98 12.51 | 4.71 9.85 6.90 |
-
-### Table 5
-|  |  |  |  |  | dedda r |  |  | dedda r |  |  | dedda r |  |  | gninut e |  | Piano Horn Violin |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-|  |  |  |  | dr | eyal |  | ht | eyal |  | ht | eyal |  |  | nif trat |  |  |
-|  |  |  |  |  | 3 |  |  | 4 |  |  | 5 |  |  | S |  |  |
-|  |  | d |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  | edda |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | d | reyal |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-
-
-## Mathematical Formulas
-
-### Formula 1
-```latex
-i=1 vi(n)
-```
-
-### Formula 2
-```latex
-\frac{8}{15}
-```
-
-### Formula 3
-```latex
-= s(n) + M X i
-```
-
-### Formula 4
-```latex
-=1 vi(n)
-```
-
-### Formula 5
-```latex
-2135 978-1-4673-6997-\frac{8}{15}/$31.00 2015 IEEE ICASSP 2015
-```
-
-### Formula 6
-```latex
-k = 1
-```
-
-### Formula 7
-```latex
-k=1
-```
-
-### Formula 8
-```latex
-p=1
-```
-
-### Formula 9
-```latex
-b= Variations) Bassoon 18 1
-```
-
-### Formula 10
-```latex
-i = 1
-```
-
-### Formula 11
-```latex
-i=1
-```
-
-### Formula 12
-```latex
-> 0 in order to make it independent of different amplitude levels of the mixture x(n) where
-```
-
-### Formula 13
-```latex
-1 = max (Wkxk + bk
-```
-
-### Formula 14
-```latex
-i o with i = 1
-```
-
-### Formula 15
-```latex
-= 1
-```
-
-### Formula 16
-```latex
-M X i=1
-```
-
-### Formula 17
-```latex
-Mixture x(n) ..
-```
-
-### Formula 18
-```latex
-,˜s(P )o and n ˜v(1) i ,
-```
-
-### Formula 19
-```latex
-, ˜v(P ) i o with i = 1,
-```
-
-### Formula 20
-```latex
-, M where ˜s(p)\inC(2C+1)Land ˜v(p) i \inC(2C+1)L, i.e., they also contain the 2C neighboring frames
-```
-
-### Formula 21
-```latex
-These are now combined to form the DNN input/targets, i.e., x(p)= 1 \gamma(p) \alpha(p)˜s(p) + M X i=1 \alpha(p) i ˜v(p) i , (3a) 2136
-```
-
-### Formula 22
-```latex
-i=1
-```
-
-### Formula 23
-```latex
-S = 0    0 I 0    0
-```
-
-### Formula 24
-```latex
-p=1 s(p)
-```
-
-### Formula 25
-```latex
-k = 1 or the output of the (k
-```
-
-### Formula 26
-```latex
-p=1
-```
-
-### Formula 27
-```latex
-k = CsxC
-```
-
-### Formula 28
-```latex
-k= s
-```
-
-### Formula 29
-```latex
-x = P X p
-```
-
-### Formula 30
-```latex
-s =1 P PP p
-```
-
-### Formula 31
-```latex
-k = 1 P PP p
-```
-
-### Formula 32
-```latex
-L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 33
-```latex
-L = 3591 elements and corresponds to 224 milliseconds of the mixture signal
-```
-
-### Formula 34
-```latex
-P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 35
-```latex
-> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in
-```
-
-### Formula 36
-```latex
-PM i=1
-```
-
-### Formula 37
-```latex
-= arg min Wk
-```
-
-### Formula 38
-```latex
-bk P X p=1 s(p)
-```
-
-### Formula 39
-```latex
-k denotes either the pth DNN input for k = 1 or the output of the (k
-```
-
-### Formula 40
-```latex
-form and the solution is given by Winit k = CsxC
-```
-
-### Formula 41
-```latex
-binit k= s
-```
-
-### Formula 42
-```latex
-with Csx = P X p
-```
-
-### Formula 43
-```latex
-=1  s(p)
-```
-
-### Formula 44
-```latex
-Cxx = P X p
-```
-
-### Formula 45
-```latex
-=1  x(p) k
-```
-
-### Formula 46
-```latex
-and s =1 P PP p
-```
-
-### Formula 47
-```latex
-=1s(p)
-```
-
-### Formula 48
-```latex
-xk = 1 P PP p
-```
-
-### Formula 49
-```latex
-=1x(p) k
-```
-
-### Formula 50
-```latex
-we have L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 51
-```latex
-= 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN
-```
-
-### Formula 52
-```latex
-we use P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 53
-```latex
-3000 = 6000 L-BFGS iterations
-```
-
-### Formula 54
-```latex
-s(p)=\alpha(p) \gamma(p) S ˜s(p) , (3b) where \gamma(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in \alpha(p)˜s(p) + PM i=1\alpha(p) i ˜v(p) i and S \inRL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0
-```
-
-### Formula 55
-```latex
-The scalars \alpha(p), \alpha(p) 1,
-```
-
-### Formula 56
-```latex
-The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k
-```
-
-### Formula 57
-```latex
-., {Wk, bk}
-```
-
-### Formula 58
-```latex
-J = (PP p
-```
-
-### Formula 59
-```latex
-p=1
-```
-
-### Formula 60
-```latex
-J = 0
-```
-
-### Formula 61
-```latex
-2 the evolution of the normalized DNN training error J = (PP p
-```
-
-### Formula 62
-```latex
-=1
-```
-
-### Formula 63
-```latex
-PP p=1
-```
-
-### Formula 64
-```latex
-we have an initial error of J = 0
-```
-
-### Formula 65
-```latex
-we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1
-```
-
-### Formula 66
-```latex
-= 0
-```
-
-### Formula 67
-```latex
-2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec
-```
-
-### Formula 68
-```latex
-REFERENCES [1] P
-```
-
-### Formula 69
-```latex
-[2] G
-```
-
-### Formula 70
-```latex
-[3] Z
-```
-
-### Formula 71
-```latex
-[4] J.-L
-```
-
-### Formula 72
-```latex
-[5] D
-```
-
-### Formula 73
-```latex
-[6] D
-```
-
-### Formula 74
-```latex
-[7] A
-```
-
-### Formula 75
-```latex
-[8] C
-```
-
-### Formula 76
-```latex
-[9] G
-```
-
-### Formula 77
-```latex
-[10] E
-```
-
-### Formula 78
-```latex
-[11] P.-S
-```
-
-### Formula 79
-```latex
-[12] P.-S
-```
-
-### Formula 80
-```latex
-[13] X
-```
-
-### Formula 81
-```latex
-[14] M
-```
-
-### Formula 82
-```latex
-[15] B
-```
-
-### Formula 83
-```latex
-[16] P
-```
-
-### Formula 84
-```latex
-[17] M
-```
-
-### Formula 85
-```latex
-[18] R
-```
-
-### Formula 86
-```latex
-[19] P
-```
-
-### Formula 87
-```latex
-[20] P
-```
-
-### Formula 88
-```latex
-[21] M
-```
-
-### Formula 89
-```latex
-[22] J
-```
-
-### Formula 90
-```latex
-[23] E
-```
-
-### Formula 91
-```latex
-[24] P
-```
-
-### Formula 92
-```latex
-[25] F
-```
-
-### Formula 93
-```latex
-[26] B
-```
-
-### Formula 94
-```latex
-[27] B
-```
-
-### Formula 95
-```latex
-[28] E
-```
-
-### Formula 96
-```latex
-[29] M
-```
-
-
-## Forms and Fields
-
-### Form 1
-
-### Form 2
-
-### Form 3
-
-### Form 4
-
-### Form 5
-
-
-
-
-
-## Background Information
-
-# test_document
-*Converted from PDF using PPARSER*
-
-## Table of Contents
-- [Content](#content)
-- [Images](#images)
-- [Tables](#tables)
-- [Formulas](#formulas)
-- [Forms](#forms)
-
-## Content
-See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper  April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS 138 READS 4,160 3 authors: Stefan Uhlich University of Stuttgart 67PUBLICATIONS1,229CITATIONS SEE PROFILE Franck Giron Sony Europe B.V., Zwg. Deutschland 8PUBLICATIONS380CITATIONS SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175PUBLICATIONS2,294CITATIONS SEE PROFILE All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file.
-DEEP NEURAL NETWORK BASED INSTRUMENT EXTRACTION FROM MUSIC Stefan Uhlich1, Franck Giron1and Yuki Mitsufuji2 1 Sony European Technology Center (EuTEC), Stuttgart, Germany 2 Sony Corporation, Audio Technology Development Department, Tokyo, Japan ABSTRACT This paper deals with the extraction of an instrument from music by using a deep neural network. As prior information, we only as- sume to know the instrument types that are present in the mixture and, using this information, we generate the training data from a database with solo instrument performances. The neural network is built up from rectiﬁed linear units where each hidden layer has the same number of nodes as the output layer. This allows a least squares initialization of the layer weights and speeds up the training of the network considerably compared to a traditional random initializa- tion. We give results for two mixtures, each consisting of three in- struments, and evaluate the extraction performance using BSS Eval for a varying number of hidden layers. Index Terms— Deep neural network (DNN), Instrument extrac- tion, Blind source separation (BSS) 1. INTRODUCTION In this paper, we study the extraction of a target instrument s(n) ∈R from an instantaneous, monaural music mixture x(n) ∈R, i.e., of a mixture that can be written as x(n) = s(n) + M X i=1 vi(n), (1) where vi(n) is the time signal of the ith background instrument and the mixture consists thus in a total of M +1 instruments. From x(n) we want to extract an estimate ˆs(n) of the target instrument s(n) and, therefore, we can see instrument extraction as a special case of the general blind source separation (BSS) problem [1, 2]. Various applications require such an estimate ˆs(n) ranging from Karaoke systems which use a separation into a instruments and a vocal track, see [3, 4], to upmixing where one tries to obtain a multi-channel version of the monaural mixture x(n), see [5,6]. We propose a deep neural network (DNN) for the extraction of the target instrument s(n) from x(n) as DNNs have proved to work very well in various applications and have gained a lot of interest in the last years, especially for classiﬁcation tasks in image process- ing [7, 8] and for speech recognition [9]. We use the DNN in the frequency domain to estimate a target instrument from the mixture, i.e., we train the network such that we can think of it as a “denoiser” which converts the “noisy” mixture spectrogram to the “clean” in- strument spectrogram. For the training of the network, we only as- sume to know the instrument types of the target instrument s(n) and of the other background instruments v1(n), . . . , vM(n), for exam- ple that we want to extract a piano from a mixture with a violin and a horn. This is in contrast to other proposed DNN approaches for BSS of music which are supervised in the sense that they assume to have more knowledge about the signals [10–12]. Huang et. al. used in [11, 12] a deep (recurrent) neural network for the separa- tion of two sources where the neural network is extended by a ﬁnal softmask layer to extract the source estimates and it is trained using a discriminative cost function that also tries to decrease the interfer- ence by other sources. Whereas they only know the type of the target instrument (in their case: singing voice) in [12], they assume that the background is one of 110 known karaoke songs. In contrast, we only know the instrument types that appear in the mixture and, hence, we have to use a large instrument database with solo performances from various musicians and instruments. From this database, we generate the training data that allows us to generalize to new mixtures and this instrument database with the training data generation is thus a integral part of our DNN architecture. A second contribution of the paper is the efﬁcient training of the DNN: We propose a network architecture where each hidden rectiﬁed linear unit (ReLU) layer has the same number of nodes as the output layer. This allows a least squares initialization of the network weights of each layer and, using it as starting point for the limited-memory BFGS (L-BFGS) optimizer, yields a quicker convergence to good network weights. Additionally, we noticed that this initialization often results in ﬁnal network weights which have a smaller training error than if we start the training from randomly initialized weights as we ﬁnd better local minima. The remainder of this paper is organized as follows: In Sec. 2 we describe in detail the DNN based instrument extraction where in particular Sec. 2.1 explains the network structure, Sec. 2.2 shows the generation of the training data and Sec. 2.3 details the layer-wise training procedure. In Sec. 3, we give results for two music mixtures, each consisting of three instruments, before we conclude this paper in Sec. 4 where we summarize our work and give an outlook of future steps. The following notation is used throughout this paper: x denotes a column vector and X a matrix where in particular I is the identity matrix. The matrix transpose and Euclidean norm are denoted by (.)Tand ∥.∥, respectively. Furthermore, max (x, y) is the element- wise maximum operation between x and y, and |x| returns a vector with the element-wise magnitude values of x. 2. DNN BASED INSTRUMENT EXTRACTION 2.1. General Network Structure We will explain now the proposed DNN approach for extracting the target instrument s(n) from the mixture x(n), which is also depicted in Fig. 1. The extraction is done in the frequency domain and it consists of the following three steps: (a) Feature vector generation: We use a short-time Fourier trans- form (STFT) with (possibly overlapping) rectangular windows to transform the mixture signal x(n) into the frequency domain. From this frequency representation, we build a feature vector1 x ∈R(2C+1)Lby stacking the magnitude values of the current frame and the C preceding/succeeding frames where L gives the number of magnitude values per frame. The motivation for using also the 2C neighboring frames is to provide the DNN with tem- poral context that allows it to better extract the target instrument. Please note that these context frames are chosen such that they are 1For convenience, we use in the following a simpliﬁed notation and drop the frame index for x, xk, s, ˆx and γ. 2135 978-1-4673-6997-8/15/$31.00 2015 IEEE ICASSP 2015
-Mixture x(n) ... STFT ... Magnitude STFT frames of x(n) DNN input x ∈R(2C+1)L normalized by γ W1, b1 W2, b2    WK, bK DNN with K ReLU layers DNN output ˆs ∈RL rescaled with γ ... Magnitude STFT frames of ˆs(n) ISTFT ... Recovered instrument ˆs(n) Fig. 1: Instrument extraction using a deep neural network non-overlapping2. Finally, the input vector x is normalized by a scalar γ > 0 in order to make it independent of different amplitude levels of the mixture x(n) where γ is the average Euclidean norm of the 2C + 1 magnitude frames in x. (b) DNN instrument extraction: In a second step, the normalized STFT amplitude vector x is fed to a DNN, which consists of K layers with rectiﬁed linear units (ReLU), i.e., we have xk+1 = max (Wkxk + bk, 0) , k = 1, . . . , K (2) where xk denotes the input to the kth layer and in particular x1 is the DNN input x and xK+1 the DNN output ˆs. Each ReLU layer has L nodes and the network weights {Wk, bk}k=1,...,K are trained such that the DNN outputs an estimate ˆs of the magnitude frame s ∈RL of the target instrument from the mixture vector x. We can thus think of the DNN performing a denoising of the “noisy” mixture input. DNNs with ReLU activation functions have shown very good results, see for example [13, 14], and, as each layer has L hidden units, this activation function will allow us to use a layer-wise least squares initialization as will be shown in Sec. 2.3. (c) Reconstruction of the instrument: Using the phase of the original mixture STFT and multiplying each DNN output ˆs with the energy normalization γ that was applied to the corresponding input vector, we obtain an estimate of the STFT of the target instrument s(n), which we convert back into the time domain using an inverse STFT [15]. Note that the DNN outputs ˆs, i.e., the magnitude frames of the target instrument, will be overlapping as shown in Fig. 1 if the STFT in the ﬁrst step (a) was also using overlapping windows. Please refer to [15] for the ISTFT in this case. 2.2. Training Data Generation In order to train the weights {W1, b1}, . . . , {WK, bK} of the DNN, we need a training set {x(p), s(p)}p=1,...,P of P input/target pairs where x(p)∈R(2C+1)Lis a magnitude vector of the mixture with C preceding/succeeding frames and s(p)∈RLthe corre- sponding magnitude vector of the target instrument that we want to extract. In general, there are several possibilities to generate the required material for the DNN training, which differ in the prior knowledge that we have3: For the target instrument s(n), we either only know the instrument type (e.g., piano) or we have recordings from it. For the background instruments vi(n), we either have no knowledge, we know the instrument types that occur in the mixture or we even have 2E.g., if the STFT uses a overlap of 50%, then we only take every second frame to build the feature vector x. 3Beside the discussed cases, there is also the possibility that we have knowledge about the melody of the target instrument, see for example [16]. Instrument Number of ﬁles Material length (b= Variations) Bassoon 18 1.44 hours Cello 6 1.88 hours Clarinet 14 1.15 hours Horn 14 0.82 hours Piano 89 6.12 hours Saxophone 19 1.16 hours Trumpet 16 0.38 hours Viola 13 1.61 hours Violin 12 5.60 hours Table 1: Instrument database recordings of the particular instruments that occur in the mixture. The easiest case is when we have recordings of the instrument that we want to extract and of those that occur as background in the mix- ture. The most difﬁcult case is when we only know the type of the instrument that we want to extract and do not have any knowledge about the background instruments that will appear in the mixture. In this paper, we assume that we know the instrument types of the tar- get and background, e.g., we know that we want to extract a piano from a mixture with a horn and a violin. Using this prior knowl- edge is reasonable since for many songs, we either have metadata which provides information about the instruments that occur or, in case this information is missing, could be provided by the user. As we only know the instrument types that appear in the mixture, we built a musical instrument database, see Table 1 for the details. The music pieces are stored in the free lossless audio codec (FLAC) for- mat with a sampling rate of 48kHz and contain solo performances of the instruments. For each instrument type we have several ﬁles stemming from different musicians with different instruments play- ing classical masterpieces. These variations are important as we only know the instrument types and, hence, the DNN should generalize well to new instruments of the same type. For the DNN training, we ﬁrst load from the instrument database all audio ﬁles of the instruments that occur in the mixture and resam- ple them to a lower DNN system sampling rate, where the sampling rate is chosen such that the computational complexity of the total DNN system is reduced. In a second step, we convert all signals into the frequency domain using a STFT and randomly sample from the target and background instruments P complex-valued STFT vectors n ˜s(1), . . . ,˜s(P )o and n ˜v(1) i , . . . , ˜v(P ) i o with i = 1, . . . , M where ˜s(p)∈C(2C+1)Land ˜v(p) i ∈C(2C+1)L, i.e., they also contain the 2C neighboring frames. These are now combined to form the DNN input/targets, i.e., x(p)= 1 γ(p) α(p)˜s(p) + M X i=1 α(p) i ˜v(p) i , (3a) 2136
-s(p)=α(p) γ(p) S ˜s(p) , (3b) where γ(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in α(p)˜s(p) + PM i=1α(p) i ˜v(p) i and S ∈RL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0 . The scalars α(p), α(p) 1, . . . , α(p) Mdenote the random amplitudes of each instru- ment which stem from a uniform distribution with support [0.01, 1]. The normalization γ(p)is used to yield a DNN input that is inde- pendent of different amplitude levels of the mixture. Please note, however, that each instrument inside the mixture has a different amplitude α(p), α(p) 1, . . . , α(p) M, i.e., the DNN learns to extract the target instrument even if it has a varying amplitude compared to the background instruments. 2.3. DNN Training Using the dataset that we generated as outlined above, we can learn the network weights such that the sum-of-squared errors (SSE) be- tween the P targets s(p)and the DNN outputs ˆs(p)is minimized4. Due to the special network structure and the use of ReLU (cf. Sec. 2.1), we can perform a layer-wise training of the DNN. Each time a new layer is added, we ﬁrst initialize the weights using least squares estimates of Wk and bk by neglecting the nonlinear rectiﬁer function. As the target vectors s(p)are non-negative, we know that the SSE after adding the ReLU activation function can not increase and, hence, using the least-squares solution as initialization results in a good starting point for the L-BFGS solver that we then use. In the following, we will now describe in more details the two steps that we perform if a new layer is added: (a) Weight initialization: For the kth layer, we solve the optimization problem {Winit k, binit k} = arg min Wk,bk P X p=1 s(p) −  Wkx(p) k + bk  2 (4) where x(p) k denotes either the pth DNN input for k = 1 or the output of the (k −1)th layer if k > 1. Using (4), we choose the initial weights of the network such that they are the optimal linear least squares reconstruction of the targets {s(p)}p=1,...,P from the fea- tures {x(p) k}p=1,...,P . As we know that all elements of the target vector s(p)are non-negative, it is obvious that the total error can not increase by adding the ReLU activation function and, therefore, this initialization is a good starting point for the iterative training in step (b). The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k. (b) L-BFGS training: Starting from the initialization (a), we use a L-BFGS training with the SSE cost function to update the complete network, i.e., to update {W1, b1}, . . ., {Wk, bk}. 4We also tested the weighted Euclidean distance [19] as it showed good results for speech enhancement. However, we could not see an improvement and therefore use the SSE cost function in the following. These two steps are done K times in order to result in a network with K ReLU layers. Finally, after adding all layers, we do a ﬁne tuning of the complete network, where we again use L-BFGS. Using this procedure, we train the DNN as a denoising network as each layer, when it is added to the network, tries to recover the original targets s(p)from the output of the previous layer. This is similar to stacked denoising autoencoders, see [20, 21]. In our ex- periments, we have noticed that using the least squares initialization is advantageous with respect to the following two aspects if com- pared to a random initialization: First, it reduces the training time for the network considerably as we start the L-BFGS optimizer from a good initial value and, second, we found that we do not have the problem of converging to poor local minima which was sometimes the case for the random initialization. In the next section, we will show the beneﬁt of using the proposed initialization. 3. SEPARATION RESULTS In the following, we will now give results for the proposed DNN ap- proach. We consider two monaural music mixtures from the TRIOS dataset [22], each composed of three instruments: the “Brahms” trio consisting of a horn, a piano and a violin and the “Lussier” trio with a bassoon, a piano and a trumpet. We use the following settings for our experiments: The DNN system sampling rate (cf. Sec. 2.2) was chosen to be 32kHz which is a compromise between the audio quality of the extracted instru- ment and the DNN training time. For each frame, we have L = 513 magnitude values and we augment the input vector by C = 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN. Hence, one DNN input vector x has a length of (2C + 1)L = 3591 elements and corresponds to 224 milliseconds of the mixture signal. For the training, we use P = 106samples and the gen- erated training material has thus a length of 62.2 hours. During the layerwise training, we use 600 L-BFGS iterations for each new layer and the ﬁnal ﬁne tuning consists of 3000 additional L-BFGS iterations for the complete network such that in total we execute 5  600 + 3000 = 6000 L-BFGS iterations. Table 2 shows the BSS Eval values [23], i.e., the signal-to- distortion ratio (SDR), signal-to-interference ratio (SIR) and signal- to-artifact ratio (SAR) values after the addition of each ReLU layer. Besides the raw DNN outputs, we also give the BSS Eval values if we use a Wiener ﬁlter to combine the DNN outputs of the three instruments. This additional post-processing step allows an en- hancement of the source separation results since, from the raw DNN outputs, it computes for each instrument a softmask and applies it to the original mixture spectrogram. Looking at the results in Table 2, we can see that there is a noticeable improvement when adding the ﬁrst three layers but the difference becomes smaller for additional layers. For “Brahms”, the best results are obtained after adding all ﬁve layers and performing the ﬁnal ﬁne tuning. This is different for “Lussier”: For the trumpet, we can see that the network is starting to overﬁt to the training set when adding more than three layers as the SDR/SIR values start to decrease. The problem is the limited amount of material for the trumpet (22.5 minutes of solo performances, see Table 1), which is too small. Interestingly, also the DNNs for the other two instruments start to overﬁt which is probably also due to the trumpet in the mixture. From the results we can conclude that having sufﬁcient material for each instrument is vital if only the instrument type is known since only this ensures a good source separation quality and avoids overﬁtting. Table 3 shows for comparison the BSS Eval results for three unsupervised NMF based source separation approaches: • “MFCC kmeans [17]”: This approach uses a Mel ﬁlter bank of size 30 which is applied to the frequency basis vectors of the NMF decomposition in order to compute MFCCs. These are 2137
-Instrument Output After 1st layer After 2nd layer After 3rd layer After 4th layer After 5th layer After ﬁne tuning SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn Raw output 3.30 4.79 9.93 5.15 8.19 8.73 5.29 8.50 8.69 5.38 8.66 8.69 5.53 9.19 8.47 5.70 9.57 8.44 WF output 4.05 5.63 10.25 6.36 10.20 9.08 6.51 10.81 8.87 6.58 10.99 8.87 6.71 11.44 8.79 6.80 11.68 8.79 Piano Raw output 0.85 1.93 9.58 2.34 4.37 7.97 3.16 6.60 6.64 3.26 6.61 6.82 3.34 6.86 6.71 3.47 7.34 6.51 WF output 2.62 4.54 8.41 4.13 7.53 7.49 4.36 9.07 6.66 4.40 9.13 6.67 4.47 9.41 6.62 4.68 10.13 6.54 Violin Raw output −0.23 1.88 6.11 3.06 9.52 4.63 3.49 9.21 5.33 3.50 9.23 5.34 3.57 9.44 5.33 3.90 10.34 5.41 WF output 3.62 8.57 5.86 5.27 14.10 6.05 6.04 15.19 6.74 6.08 15.30 6.76 6.02 15.36 6.68 6.11 15.60 6.75 Lussier Bassoon Raw output 3.05 5.48 7.82 3.47 6.51 7.32 3.62 7.00 7.07 3.68 7.14 7.04 3.72 7.31 6.96 3.39 7.08 6.60 WF output 4.38 7.55 7.94 4.40 9.38 6.53 4.36 9.71 6.30 4.42 9.75 6.36 4.34 9.75 6.26 3.92 9.37 5.85 Piano Raw output 1.57 3.30 8.08 1.69 4.06 6.90 1.87 4.21 7.08 1.94 4.31 7.06 1.93 4.38 6.92 1.97 4.65 6.61 WF output 3.12 6.07 7.14 3.33 6.60 6.95 3.23 6.44 6.94 3.32 6.64 6.89 3.27 6.69 6.75 2.99 6.64 6.29 Trumpet Raw output 5.01 9.37 7.47 6.28 11.26 8.25 6.61 11.67 8.51 6.56 11.54 8.52 6.55 11.57 8.49 6.38 11.49 8.27 WF output 6.00 10.18 8.49 7.14 12.86 8.71 7.38 13.55 8.77 7.23 13.43 8.62 7.22 13.49 8.58 7.23 13.54 8.57 Table 2: BSS Eval results for DNN instrument extraction (“Brahms” and “Lussier” trio, all values are given in dB) Instrument MFCC kmeans [17] Mel NMF [17] Shifted-NMF [18] DNN with WF SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn 3.87 5.76 9.41 4.17 5.83 10.17 2.95 3.34 15.20 6.80 11.68 8.79 Piano 3.30 4.42 10.76 −0.10 0.21 14.39 3.78 5.59 9.50 4.68 10.13 6.54 Violin −8.35 −7.89 10.21 9.69 19.79 10.19 7.66 10.96 10.74 6.11 15.60 6.75 Average −0.39 0.76 10.13 4.59 8.61 11.58 4.80 6.63 11.81 5.86 12.47 7.36 Lussier Bassoon 1.85 11.67 2.61 0.15 0.75 11.72 −0.83 −0.60 15.43 3.92 9.37 5.85 Piano 4.66 6.28 10.64 4.56 8.00 7.83 2.54 5.14 7.16 2.99 6.64 6.29 Trumpet −1.73 −1.29 12.18 8.46 18.12 9.05 6.57 7.39 14.95 7.23 13.54 8.57 Average 1.59 5.55 8.48 4.39 8.96 9.53 2.76 3.98 12.51 4.71 9.85 6.90 Table 3: Comparison of BSS Eval results (all values are given in dB) then clustered via kmeans. For the Mel ﬁlter bank, we use the implementation [24] of [25]. • “Mel NMF [17]”: This approach also applies a Mel ﬁlter bank of size 30 to the original frequency basis vectors and uses a sec- ond NMF to perform the clustering. • “Shifted-NMF [18]”: For this approach, we use a constant Q transform matrix with minimal frequency 55 Hz and 24 fre- quency bins per octave. The shifted-NMF decomposition is al- lowed to use a maximum of 24 shifts. The constant Q transform source code was kindly provided by D. FitzGerald and we use the Tensor toolbox [26,27] for the shifted-NMF implementation. The best SDR values in Table 3 are emphasized in bold face and we can observe that, although our DNN approach not always gives the best individual SDR per instrument, it has the best average SDR for both mixtures since it is capable of extracting three sources with similar quality. This is not the case for the NMF approaches which have one instrument with a low SIR value, i.e., one instrument that is not well separated from the others.5 In order to see the beneﬁt of the least squares initialization from Sec. 2.3 we show in Fig. 2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec. 2.2. The denominator of J gives the SSE of a baseline system where the DNN is perform- ing an identity transform. From Fig. 2 we can see that the error is signiﬁcantly decreased whenever a new layer is added as the error J exhibits downward “jumps”. These “jumps” are due to the least squares initialization of the network weights. For example, consider the training error in Fig. 2 of the network that extracts the piano: When the ﬁrst layer is added, we have an initial error of J = 0.23, which means that, using the least squares initialization from Sec. 2.3, we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1 = 0. Would we have used the 5Please note that the considered NMF approaches are only assuming to know the number of sources, i.e., they use less prior knowledge than our DNN approach. We also tried the supervised NMF approach from [28] where the frequency basis vectors are pre-trained on our instrument database. How- ever, this supervised NMF approach resulted in signiﬁcant worse SDR values as the learned frequency bases for the instruments are correlated which intro- duces interference. 600 1200 1800 2400 3000 6000 0.08 0.1 0.12 0.14 0.16 0.18 0.2 0.22 Number of L−BFGS iterations Normalized training error J 2nd layer added 3rd layer added 4th layer added 5th layer added Start fine tuning Piano Horn Violin Fig. 2: Evolution of training error for “Brahms” baseline initialization, then a simulation showed that it would have taken us 980 additional L-BFGS iterations to reach the error value of the least squares initialization. These L-BFGS iterations can be saved and, therefore, we converge much faster to a network with a good instrument extraction performance. 4. CONCLUSIONS AND FUTURE WORK In this paper, we used a deep neural network for the extraction of an instrument from music. Using only the knowledge of the instrument types, we generated the training data from a database with solo in- strument performances and the network is trained layer-wise with a least-squares initialization of the weights. During our experiments, we noticed that the material length and quality of the solo performances is important as only sufﬁcient ma- terial allows the neural network to generalize to new, i.e., before unseen, instruments. We therefore plan to incorporate the “RWC Music Instrument Sounds” database [29] as it contains high quality samples from many instruments. Furthermore, our data generation process in Sec. 2.2 currently does not exploit music theory when generating the mixtures and we think that, taking such knowledge into account, should generate training data that is better suited for the instrument extraction task. 2138
-5. REFERENCES [1] P. Comon and C. Jutten, Eds., Handbook of Blind Source Sep- aration: Independent Component Analysis and Applications, Academic Press, 2010. [2] G. R. Naik and W. Wang, Eds., Blind Source Separation: Advances in Theory, Algorithms and Applications, Springer, 2014. [3] Z. Raﬁi and B. Pardo, “Repeating pattern extraction technique (REPET): A simple method for music/voice separation,” IEEE Transactions on Audio, Speech, and Language Processing, vol. 21, no. 1, pp. 73–84, 2013. [4] J.-L. Durrieu, B. David, and G. Richard, “A musically moti- vated mid-level representation for pitch estimation and musical audio source separation,” IEEE Journal on Selected Topics on Signal Processing, vol. 5, pp. 1180–1191, 2011. [5] D. FitzGerald, “Upmixing from mono - a source separation ap- proach,” Proc. 17th International Conference on Digital Signal Processing, 2011. [6] D. FitzGerald, “The good vibrations problem,” 134th AES Convention, e-brief, 2013. [7] A. Krizhevsky, I. Sutskever, and G. E. Hinton, “Imagenet clas- siﬁcation with deep convolutional neural networks,” in Ad- vances in neural information processing systems, 2012, pp. 1097–1105. [8] C. Farabet, C. Couprie, L. Najman, and Y. LeCun, “Learning hierarchical features for scene labeling,” IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 35, no. 8, pp. 1915–1929, 2013. [9] G. Hinton, L. Deng, D. Yu, G. E. Dahl, A.-R. Mohamed, N. Jaitly, A. Senior, V. Vanhoucke, P. Nguyen, T. N. Sainath, et al., “Deep neural networks for acoustic modeling in speech recognition: The shared views of four research groups,” IEEE Signal Processing Magazine, vol. 29, no. 6, pp. 82–97, 2012. [10] E. M. Grais, M. U. Sen, and H. Erdogan, “Deep neu- ral networks for single channel source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Process- ing (ICASSP), pp. 3734–3738, 2014. [11] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Deep learning for monaural speech sepa- ration,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 1562–1566, 2014. [12] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Singing-voice separation from monaural recordings using deep recurrent neural networks,” Interna- tional Society for Music Information Retrieval Conference (ISMIR), 2014. [13] X. Glorot, A. Bordes, and Y. Bengio, “Deep sparse rectiﬁer networks,” Proceedings of the 14th International Conference on Artiﬁcial Intelligence and Statistics, vol. 15, pp. 315–323, 2011. [14] M. D. Zeiler, M. Ranzato, R. Monga, M. Mao, K. Yang, Q. V. Le, P. Nguyen, A. Senior, V. Vanhoucke, J. Dean, et al., “On rectiﬁed linear units for speech processing,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 3517–3521, 2013. [15] B. Yang, “A study of inverse short-time Fourier transform,” Proc. IEEE Conference on Acoustics, Speech, and Signal Pro- cessing (ICASSP), pp. 3541–3544, 2008. [16] P. Smaragdis and G. J. Mysore, “Separation by “humming”: User-guided sound extraction from monophonic mixtures,” IEEE Workshop on Applications of Signal Processing to Au- dio and Acoustics, pp. 69–72, 2009. [17] M. Spiertz and V. Gnann, “Source-ﬁlter based clustering for monaural blind source separation,” Proc. Int. Conference on Digital Audio Effects, 2009. [18] R. Jaiswal, D. FitzGerald, D. Barry, E. Coyle, and S. Rickard, “Clustering NMF basis functions using shifted NMF for monaural sound source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 245– 248, 2011. [19] P. C. Loizou, “Speech enhancement based on perceptually mo- tivated Bayesian estimators of the magnitude spectrum,” IEEE Transactions on Speech and Audio Processing, vol. 13, no. 5, pp. 857–869, 2005. [20] P. Vincent, H. Larochelle, Y. Bengio, and P.-A. Manzagol, “Ex- tracting and composing robust features with denoising autoen- coders,” Proceedings of the International Conference on Ma- chine Learning, pp. 1096–1103, 2008. [21] M. Chen, Z. Xu, K. Weinberger, and F. Sha, “Marginalized denoising autoencoders for domain adaptation,” Proceedings of the International Conference on Machine Learning, 2012. [22] J. Fritsch, “High quality musical audio source separation,” Master’s Thesis, UPMC / IRCAM / Telecom ParisTech, 2012. [23] E. Vincent, R. Gribonval, and C. Fevotte, “Performance mea- surement in blind audio source separation,” IEEE Transactions on Audio, Speech and Language Processing, vol. 14, no. 4, pp. 1462–1469, 2006. [24] P. Brady, “Matlab Mel ﬁlter implementation,” http://www.mathworks.com/matlabcentral/ fileexchange/23179-melfilter, 2014, [Online]. [25] F. Zheng, G. Zhang, and Z. Song, “Comparison of different implementations of MFCC,” Journal of Computer Science and Technology, vol. 16, no. 6, pp. 582–589, September 2001. [26] B. W. Bader and T. G. Kolda, “MATLAB tensor toolbox version 2.5,” http://www.sandia.gov/˜tgkolda/ TensorToolbox/, January 2012, [Online]. [27] B. W. Bader and T. G. Kolda, “Algorithm 862: MATLAB ten- sor classes for fast algorithm prototyping,” ACM Transactions on Mathematical Software, vol. 32, no. 4, pp. 635–653, De- cember 2006. [28] E. M. Grais and H. Erdogan, “Single channel speech music separation using nonnegative matrix factorization and spectral mask,” Digital Signal Processing (DSP), 2011 17th Interna- tional Conference on IEEE, pp. 1–6, 2011. [29] M. Goto, H. Hashiguchi, T. Nishimura, and R. Oka, “RWC Music Database: Music Genre Database and Musical Instru- ment Sound Database,” Proc. of the International Conference on Music Information Retrieval (ISMIR), pp. 229–230, 2003. 2139 View publication stats
-
-## Images
-
-### Image 1
-**Description:** small rectangular grayscale image (64x64)
-![Image 1](page_1_img_1_0f58f9aa.png)
-**Dimensions:** 64x64
-
-### Image 2
-**Description:** small rectangular color image (64x64)
-![Image 2](page_1_img_2_87e4f64c.png)
-**Dimensions:** 64x64
-
-### Image 3
-**Description:** small rectangular color image (64x64)
-![Image 3](page_1_img_3_1be6f0da.png)
-**Dimensions:** 64x64
-
-
-## Tables
-
-### Table 1
-| See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper · April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS READS 138 4,160 3 authors: Stefan Uhlich Franck Giron University of Stuttgart Sony Europe B.V., Zwg. Deutschland 67 PUBLICATIONS 1,229 CITATIONS 8 PUBLICATIONS 380 CITATIONS SEE PROFILE SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175 PUBLICATIONS 2,294 CITATIONS SEE PROFILE |  |
-| --- | --- |
-| All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file. |  |
-
-### Table 2
-| Instrument | Numberoffiles (=bVariations) | Materiallength |
-| --- | --- | --- |
-| Bassoon Cello Clarinet Horn Piano Saxophone Trumpet Viola Violin | 18 6 14 14 89 19 16 13 12 | 1.44hours 1.88hours 1.15hours 0.82hours 6.12hours 1.16hours 0.38hours 1.61hours 5.60hours |
-
-### Table 3
-| Instrument Output | After1stlayer SDR SIR SAR | After2ndlayer SDR SIR SAR | After3rdlayer SDR SIR SAR | After4thlayer SDR SIR SAR | After5thlayer SDR SIR SAR | Afterfinetuning SDR SIR SAR |
-| --- | --- | --- | --- | --- | --- | --- |
-| Rawoutput Horn WFoutput smharB Rawoutput Piano WFoutput Rawoutput Violin WFoutput | 3.30 4.79 9.93 4.05 5.63 10.25 | 5.15 8.19 8.73 6.36 10.20 9.08 | 5.29 8.50 8.69 6.51 10.81 8.87 | 5.38 8.66 8.69 6.58 10.99 8.87 | 5.53 9.19 8.47 6.71 11.44 8.79 | 5.70 9.57 8.44 6.80 11.68 8.79 |
-|  | 0.85 1.93 9.58 2.62 4.54 8.41 | 2.34 4.37 7.97 4.13 7.53 7.49 | 3.16 6.60 6.64 4.36 9.07 6.66 | 3.26 6.61 6.82 4.40 9.13 6.67 | 3.34 6.86 6.71 4.47 9.41 6.62 | 3.47 7.34 6.51 4.68 10.13 6.54 |
-|  | −0.23 1.88 6.11 3.62 8.57 5.86 | 3.06 9.52 4.63 5.27 14.10 6.05 | 3.49 9.21 5.33 6.04 15.19 6.74 | 3.50 9.23 5.34 6.08 15.30 6.76 | 3.57 9.44 5.33 6.02 15.36 6.68 | 3.90 10.34 5.41 6.11 15.60 6.75 |
-| Rawoutput Bassoon WFoutput reissuL Rawoutput Piano WFoutput Rawoutput Trumpet WFoutput | 3.05 5.48 7.82 4.38 7.55 7.94 | 3.47 6.51 7.32 4.40 9.38 6.53 | 3.62 7.00 7.07 4.36 9.71 6.30 | 3.68 7.14 7.04 4.42 9.75 6.36 | 3.72 7.31 6.96 4.34 9.75 6.26 | 3.39 7.08 6.60 3.92 9.37 5.85 |
-|  | 1.57 3.30 8.08 3.12 6.07 7.14 | 1.69 4.06 6.90 3.33 6.60 6.95 | 1.87 4.21 7.08 3.23 6.44 6.94 | 1.94 4.31 7.06 3.32 6.64 6.89 | 1.93 4.38 6.92 3.27 6.69 6.75 | 1.97 4.65 6.61 2.99 6.64 6.29 |
-|  | 5.01 9.37 7.47 6.00 10.18 8.49 | 6.28 11.26 8.25 7.14 12.86 8.71 | 6.61 11.67 8.51 7.38 13.55 8.77 | 6.56 11.54 8.52 7.23 13.43 8.62 | 6.55 11.57 8.49 7.22 13.49 8.58 | 6.38 11.49 8.27 7.23 13.54 8.57 |
-
-### Table 4
-| Instrument | MFCCkmeans[17] SDR SIR SAR | MelNMF[17] SDR SIR SAR | Shifted-NMF[18] SDR SIR SAR | DNNwithWF SDR SIR SAR |
-| --- | --- | --- | --- | --- |
-| Horn smharB Piano Violin Average | 3.87 5.76 9.41 3.30 4.42 10.76 −8.35 −7.89 10.21 | 4.17 5.83 10.17 −0.10 0.21 14.39 9.69 19.79 10.19 | 2.95 3.34 15.20 3.78 5.59 9.50 7.66 10.96 10.74 | 6.80 11.68 8.79 4.68 10.13 6.54 6.11 15.60 6.75 |
-|  | −0.39 0.76 10.13 | 4.59 8.61 11.58 | 4.80 6.63 11.81 | 5.86 12.47 7.36 |
-| Bassoon reissuL Piano Trumpet Average | 1.85 11.67 2.61 4.66 6.28 10.64 −1.73 −1.29 12.18 | 0.15 0.75 11.72 4.56 8.00 7.83 8.46 18.12 9.05 | −0.83 −0.60 15.43 2.54 5.14 7.16 6.57 7.39 14.95 | 3.92 9.37 5.85 2.99 6.64 6.29 7.23 13.54 8.57 |
-|  | 1.59 5.55 8.48 | 4.39 8.96 9.53 | 2.76 3.98 12.51 | 4.71 9.85 6.90 |
-
-### Table 5
-|  |  |  |  |  | dedda r |  |  | dedda r |  |  | dedda r |  |  | gninut e |  | Piano Horn Violin |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-|  |  |  |  | dr | eyal |  | ht | eyal |  | ht | eyal |  |  | nif trat |  |  |
-|  |  |  |  |  | 3 |  |  | 4 |  |  | 5 |  |  | S |  |  |
-|  |  | d |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  | edda |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | d | reyal |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-
-
-## Mathematical Formulas
-
-### Formula 1
-```latex
-i=1 vi(n)
-```
-
-### Formula 2
-```latex
-\frac{8}{15}
-```
-
-### Formula 3
-```latex
-= s(n) + M X i
-```
-
-### Formula 4
-```latex
-=1 vi(n)
-```
-
-### Formula 5
-```latex
-2135 978-1-4673-6997-\frac{8}{15}/$31.00 2015 IEEE ICASSP 2015
-```
-
-### Formula 6
-```latex
-k = 1
-```
-
-### Formula 7
-```latex
-k=1
-```
-
-### Formula 8
-```latex
-p=1
-```
-
-### Formula 9
-```latex
-b= Variations) Bassoon 18 1
-```
-
-### Formula 10
-```latex
-i = 1
-```
-
-### Formula 11
-```latex
-i=1
-```
-
-### Formula 12
-```latex
-> 0 in order to make it independent of different amplitude levels of the mixture x(n) where
-```
-
-### Formula 13
-```latex
-1 = max (Wkxk + bk
-```
-
-### Formula 14
-```latex
-i o with i = 1
-```
-
-### Formula 15
-```latex
-= 1
-```
-
-### Formula 16
-```latex
-M X i=1
-```
-
-### Formula 17
-```latex
-Mixture x(n) ..
-```
-
-### Formula 18
-```latex
-,˜s(P )o and n ˜v(1) i ,
-```
-
-### Formula 19
-```latex
-, ˜v(P ) i o with i = 1,
-```
-
-### Formula 20
-```latex
-, M where ˜s(p)\inC(2C+1)Land ˜v(p) i \inC(2C+1)L, i.e., they also contain the 2C neighboring frames
-```
-
-### Formula 21
-```latex
-These are now combined to form the DNN input/targets, i.e., x(p)= 1 \gamma(p) \alpha(p)˜s(p) + M X i=1 \alpha(p) i ˜v(p) i , (3a) 2136
-```
-
-### Formula 22
-```latex
-i=1
-```
-
-### Formula 23
-```latex
-S = 0    0 I 0    0
-```
-
-### Formula 24
-```latex
-p=1 s(p)
-```
-
-### Formula 25
-```latex
-k = 1 or the output of the (k
-```
-
-### Formula 26
-```latex
-p=1
-```
-
-### Formula 27
-```latex
-k = CsxC
-```
-
-### Formula 28
-```latex
-k= s
-```
-
-### Formula 29
-```latex
-x = P X p
-```
-
-### Formula 30
-```latex
-s =1 P PP p
-```
-
-### Formula 31
-```latex
-k = 1 P PP p
-```
-
-### Formula 32
-```latex
-L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 33
-```latex
-L = 3591 elements and corresponds to 224 milliseconds of the mixture signal
-```
-
-### Formula 34
-```latex
-P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 35
-```latex
-> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in
-```
-
-### Formula 36
-```latex
-PM i=1
-```
-
-### Formula 37
-```latex
-= arg min Wk
-```
-
-### Formula 38
-```latex
-bk P X p=1 s(p)
-```
-
-### Formula 39
-```latex
-k denotes either the pth DNN input for k = 1 or the output of the (k
-```
-
-### Formula 40
-```latex
-form and the solution is given by Winit k = CsxC
-```
-
-### Formula 41
-```latex
-binit k= s
-```
-
-### Formula 42
-```latex
-with Csx = P X p
-```
-
-### Formula 43
-```latex
-=1  s(p)
-```
-
-### Formula 44
-```latex
-Cxx = P X p
-```
-
-### Formula 45
-```latex
-=1  x(p) k
-```
-
-### Formula 46
-```latex
-and s =1 P PP p
-```
-
-### Formula 47
-```latex
-=1s(p)
-```
-
-### Formula 48
-```latex
-xk = 1 P PP p
-```
-
-### Formula 49
-```latex
-=1x(p) k
-```
-
-### Formula 50
-```latex
-we have L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 51
-```latex
-= 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN
-```
-
-### Formula 52
-```latex
-we use P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 53
-```latex
-3000 = 6000 L-BFGS iterations
-```
-
-### Formula 54
-```latex
-s(p)=\alpha(p) \gamma(p) S ˜s(p) , (3b) where \gamma(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in \alpha(p)˜s(p) + PM i=1\alpha(p) i ˜v(p) i and S \inRL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0
-```
-
-### Formula 55
-```latex
-The scalars \alpha(p), \alpha(p) 1,
-```
-
-### Formula 56
-```latex
-The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k
-```
-
-### Formula 57
-```latex
-., {Wk, bk}
-```
-
-### Formula 58
-```latex
-J = (PP p
-```
-
-### Formula 59
-```latex
-p=1
-```
-
-### Formula 60
-```latex
-J = 0
-```
-
-### Formula 61
-```latex
-2 the evolution of the normalized DNN training error J = (PP p
-```
-
-### Formula 62
-```latex
-=1
-```
-
-### Formula 63
-```latex
-PP p=1
-```
-
-### Formula 64
-```latex
-we have an initial error of J = 0
-```
-
-### Formula 65
-```latex
-we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1
-```
-
-### Formula 66
-```latex
-= 0
-```
-
-### Formula 67
-```latex
-2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec
-```
-
-### Formula 68
-```latex
-REFERENCES [1] P
-```
-
-### Formula 69
-```latex
-[2] G
-```
-
-### Formula 70
-```latex
-[3] Z
-```
-
-### Formula 71
-```latex
-[4] J.-L
-```
-
-### Formula 72
-```latex
-[5] D
-```
-
-### Formula 73
-```latex
-[6] D
-```
-
-### Formula 74
-```latex
-[7] A
-```
-
-### Formula 75
-```latex
-[8] C
-```
-
-### Formula 76
-```latex
-[9] G
-```
-
-### Formula 77
-```latex
-[10] E
-```
-
-### Formula 78
-```latex
-[11] P.-S
-```
-
-### Formula 79
-```latex
-[12] P.-S
-```
-
-### Formula 80
-```latex
-[13] X
-```
-
-### Formula 81
-```latex
-[14] M
-```
-
-### Formula 82
-```latex
-[15] B
-```
-
-### Formula 83
-```latex
-[16] P
-```
-
-### Formula 84
-```latex
-[17] M
-```
-
-### Formula 85
-```latex
-[18] R
-```
-
-### Formula 86
-```latex
-[19] P
-```
-
-### Formula 87
-```latex
-[20] P
-```
-
-### Formula 88
-```latex
-[21] M
-```
-
-### Formula 89
-```latex
-[22] J
-```
-
-### Formula 90
-```latex
-[23] E
-```
-
-### Formula 91
-```latex
-[24] P
-```
-
-### Formula 92
-```latex
-[25] F
-```
-
-### Formula 93
-```latex
-[26] B
-```
-
-### Formula 94
-```latex
-[27] B
-```
-
-### Formula 95
-```latex
-[28] E
-```
-
-### Formula 96
-```latex
-[29] M
-```
-
-
-## Forms and Fields
-
-### Form 1
-
-### Form 2
-
-### Form 3
-
-### Form 4
-
-### Form 5
-
-
-
-
+### Content
+Provided proper attribution is provided, Google hereby grants permission to reproduce the tables and figures in this paper solely for use in journalistic or scholarly works. 
+
+Attention Is All You Need  
+Ashish Vaswani¹ Google Brain avaswani@google.com  
+Noam Shazeer¹ Google Brain noam@google.com  
+Niki Parmar¹ Google Research nikip@google.com  
+Jakob Uszkoreit¹ Google Research usz@google.com  
+Llion Jones¹ Google Research llion@google.com  
+Aidan N. Gomez¹² University of Toronto aidan@cs.toronto.edu  
+Łukasz Kaiser¹ Google Brain lukaszkaiser@google.com  
+Illia Polosukhin¹³ illia.polosukhin@gmail.com  
+
+**Abstract**  
+The dominant sequence transduction models are based on complex recurrent or convolutional neural networks that include an encoder and a decoder. The best performing models also connect the encoder and decoder through an attention mechanism. We propose a new simple network architecture, the Transformer, based solely on attention mechanisms, dispensing with recurrence and convolutions entirely. Experiments on two machine translation tasks show these models to be superior in quality while being more parallelizable and requiring significantly less time to train. Our model achieves 28.4 BLEU on the WMT 2014 English-to-German translation task, improving over the existing best results, including ensembles, by over 2 BLEU. On the WMT 2014 English-to-French translation task, our model establishes a new single-model state-of-the-art BLEU score of 41.8 after training for 3.5 days on eight GPUs, a small fraction of the training costs of the best models from the literature. We show that the Transformer generalizes well to other tasks by applying it successfully to English constituency parsing both with large and limited training data. 
+
+¹Equal contribution. Listing order is random. Jakob proposed replacing RNNs with self-attention and started the effort to evaluate this idea. Ashish, with Illia, designed and implemented the first Transformer models and has been crucially involved in every aspect of this work. Noam proposed scaled dot-product attention, multi-head attention and the parameter-free position representation and became the other person involved in nearly every detail. Niki designed, implemented, tuned and evaluated countless model variants in our original codebase and tensor2tensor. Llion also experimented with novel model variants, was responsible for our initial codebase, and efficient inference and visualizations. Lukasz and Aidan spent countless long days designing various parts of and implementing tensor2tensor, replacing our earlier codebase, greatly improving results and massively accelerating our research.  
+²Work performed while at Google Brain.  
+³Work performed while at Google Research.  
+
+31st Conference on Neural Information Processing Systems (NIPS 2017), Long Beach, CA, USA. arXiv:1706.03762v7 [cs.CL] 2 Aug 2023
 
 ## Methodology
 
-# test_document
-*Converted from PDF using PPARSER*
-
-## Table of Contents
-- [Content](#content)
-- [Images](#images)
-- [Tables](#tables)
-- [Formulas](#formulas)
-- [Forms](#forms)
-
-## Content
-See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper  April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS 138 READS 4,160 3 authors: Stefan Uhlich University of Stuttgart 67PUBLICATIONS1,229CITATIONS SEE PROFILE Franck Giron Sony Europe B.V., Zwg. Deutschland 8PUBLICATIONS380CITATIONS SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175PUBLICATIONS2,294CITATIONS SEE PROFILE All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file.
-DEEP NEURAL NETWORK BASED INSTRUMENT EXTRACTION FROM MUSIC Stefan Uhlich1, Franck Giron1and Yuki Mitsufuji2 1 Sony European Technology Center (EuTEC), Stuttgart, Germany 2 Sony Corporation, Audio Technology Development Department, Tokyo, Japan ABSTRACT This paper deals with the extraction of an instrument from music by using a deep neural network. As prior information, we only as- sume to know the instrument types that are present in the mixture and, using this information, we generate the training data from a database with solo instrument performances. The neural network is built up from rectiﬁed linear units where each hidden layer has the same number of nodes as the output layer. This allows a least squares initialization of the layer weights and speeds up the training of the network considerably compared to a traditional random initializa- tion. We give results for two mixtures, each consisting of three in- struments, and evaluate the extraction performance using BSS Eval for a varying number of hidden layers. Index Terms— Deep neural network (DNN), Instrument extrac- tion, Blind source separation (BSS) 1. INTRODUCTION In this paper, we study the extraction of a target instrument s(n) ∈R from an instantaneous, monaural music mixture x(n) ∈R, i.e., of a mixture that can be written as x(n) = s(n) + M X i=1 vi(n), (1) where vi(n) is the time signal of the ith background instrument and the mixture consists thus in a total of M +1 instruments. From x(n) we want to extract an estimate ˆs(n) of the target instrument s(n) and, therefore, we can see instrument extraction as a special case of the general blind source separation (BSS) problem [1, 2]. Various applications require such an estimate ˆs(n) ranging from Karaoke systems which use a separation into a instruments and a vocal track, see [3, 4], to upmixing where one tries to obtain a multi-channel version of the monaural mixture x(n), see [5,6]. We propose a deep neural network (DNN) for the extraction of the target instrument s(n) from x(n) as DNNs have proved to work very well in various applications and have gained a lot of interest in the last years, especially for classiﬁcation tasks in image process- ing [7, 8] and for speech recognition [9]. We use the DNN in the frequency domain to estimate a target instrument from the mixture, i.e., we train the network such that we can think of it as a “denoiser” which converts the “noisy” mixture spectrogram to the “clean” in- strument spectrogram. For the training of the network, we only as- sume to know the instrument types of the target instrument s(n) and of the other background instruments v1(n), . . . , vM(n), for exam- ple that we want to extract a piano from a mixture with a violin and a horn. This is in contrast to other proposed DNN approaches for BSS of music which are supervised in the sense that they assume to have more knowledge about the signals [10–12]. Huang et. al. used in [11, 12] a deep (recurrent) neural network for the separa- tion of two sources where the neural network is extended by a ﬁnal softmask layer to extract the source estimates and it is trained using a discriminative cost function that also tries to decrease the interfer- ence by other sources. Whereas they only know the type of the target instrument (in their case: singing voice) in [12], they assume that the background is one of 110 known karaoke songs. In contrast, we only know the instrument types that appear in the mixture and, hence, we have to use a large instrument database with solo performances from various musicians and instruments. From this database, we generate the training data that allows us to generalize to new mixtures and this instrument database with the training data generation is thus a integral part of our DNN architecture. A second contribution of the paper is the efﬁcient training of the DNN: We propose a network architecture where each hidden rectiﬁed linear unit (ReLU) layer has the same number of nodes as the output layer. This allows a least squares initialization of the network weights of each layer and, using it as starting point for the limited-memory BFGS (L-BFGS) optimizer, yields a quicker convergence to good network weights. Additionally, we noticed that this initialization often results in ﬁnal network weights which have a smaller training error than if we start the training from randomly initialized weights as we ﬁnd better local minima. The remainder of this paper is organized as follows: In Sec. 2 we describe in detail the DNN based instrument extraction where in particular Sec. 2.1 explains the network structure, Sec. 2.2 shows the generation of the training data and Sec. 2.3 details the layer-wise training procedure. In Sec. 3, we give results for two music mixtures, each consisting of three instruments, before we conclude this paper in Sec. 4 where we summarize our work and give an outlook of future steps. The following notation is used throughout this paper: x denotes a column vector and X a matrix where in particular I is the identity matrix. The matrix transpose and Euclidean norm are denoted by (.)Tand ∥.∥, respectively. Furthermore, max (x, y) is the element- wise maximum operation between x and y, and |x| returns a vector with the element-wise magnitude values of x. 2. DNN BASED INSTRUMENT EXTRACTION 2.1. General Network Structure We will explain now the proposed DNN approach for extracting the target instrument s(n) from the mixture x(n), which is also depicted in Fig. 1. The extraction is done in the frequency domain and it consists of the following three steps: (a) Feature vector generation: We use a short-time Fourier trans- form (STFT) with (possibly overlapping) rectangular windows to transform the mixture signal x(n) into the frequency domain. From this frequency representation, we build a feature vector1 x ∈R(2C+1)Lby stacking the magnitude values of the current frame and the C preceding/succeeding frames where L gives the number of magnitude values per frame. The motivation for using also the 2C neighboring frames is to provide the DNN with tem- poral context that allows it to better extract the target instrument. Please note that these context frames are chosen such that they are 1For convenience, we use in the following a simpliﬁed notation and drop the frame index for x, xk, s, ˆx and γ. 2135 978-1-4673-6997-8/15/$31.00 2015 IEEE ICASSP 2015
-Mixture x(n) ... STFT ... Magnitude STFT frames of x(n) DNN input x ∈R(2C+1)L normalized by γ W1, b1 W2, b2    WK, bK DNN with K ReLU layers DNN output ˆs ∈RL rescaled with γ ... Magnitude STFT frames of ˆs(n) ISTFT ... Recovered instrument ˆs(n) Fig. 1: Instrument extraction using a deep neural network non-overlapping2. Finally, the input vector x is normalized by a scalar γ > 0 in order to make it independent of different amplitude levels of the mixture x(n) where γ is the average Euclidean norm of the 2C + 1 magnitude frames in x. (b) DNN instrument extraction: In a second step, the normalized STFT amplitude vector x is fed to a DNN, which consists of K layers with rectiﬁed linear units (ReLU), i.e., we have xk+1 = max (Wkxk + bk, 0) , k = 1, . . . , K (2) where xk denotes the input to the kth layer and in particular x1 is the DNN input x and xK+1 the DNN output ˆs. Each ReLU layer has L nodes and the network weights {Wk, bk}k=1,...,K are trained such that the DNN outputs an estimate ˆs of the magnitude frame s ∈RL of the target instrument from the mixture vector x. We can thus think of the DNN performing a denoising of the “noisy” mixture input. DNNs with ReLU activation functions have shown very good results, see for example [13, 14], and, as each layer has L hidden units, this activation function will allow us to use a layer-wise least squares initialization as will be shown in Sec. 2.3. (c) Reconstruction of the instrument: Using the phase of the original mixture STFT and multiplying each DNN output ˆs with the energy normalization γ that was applied to the corresponding input vector, we obtain an estimate of the STFT of the target instrument s(n), which we convert back into the time domain using an inverse STFT [15]. Note that the DNN outputs ˆs, i.e., the magnitude frames of the target instrument, will be overlapping as shown in Fig. 1 if the STFT in the ﬁrst step (a) was also using overlapping windows. Please refer to [15] for the ISTFT in this case. 2.2. Training Data Generation In order to train the weights {W1, b1}, . . . , {WK, bK} of the DNN, we need a training set {x(p), s(p)}p=1,...,P of P input/target pairs where x(p)∈R(2C+1)Lis a magnitude vector of the mixture with C preceding/succeeding frames and s(p)∈RLthe corre- sponding magnitude vector of the target instrument that we want to extract. In general, there are several possibilities to generate the required material for the DNN training, which differ in the prior knowledge that we have3: For the target instrument s(n), we either only know the instrument type (e.g., piano) or we have recordings from it. For the background instruments vi(n), we either have no knowledge, we know the instrument types that occur in the mixture or we even have 2E.g., if the STFT uses a overlap of 50%, then we only take every second frame to build the feature vector x. 3Beside the discussed cases, there is also the possibility that we have knowledge about the melody of the target instrument, see for example [16]. Instrument Number of ﬁles Material length (b= Variations) Bassoon 18 1.44 hours Cello 6 1.88 hours Clarinet 14 1.15 hours Horn 14 0.82 hours Piano 89 6.12 hours Saxophone 19 1.16 hours Trumpet 16 0.38 hours Viola 13 1.61 hours Violin 12 5.60 hours Table 1: Instrument database recordings of the particular instruments that occur in the mixture. The easiest case is when we have recordings of the instrument that we want to extract and of those that occur as background in the mix- ture. The most difﬁcult case is when we only know the type of the instrument that we want to extract and do not have any knowledge about the background instruments that will appear in the mixture. In this paper, we assume that we know the instrument types of the tar- get and background, e.g., we know that we want to extract a piano from a mixture with a horn and a violin. Using this prior knowl- edge is reasonable since for many songs, we either have metadata which provides information about the instruments that occur or, in case this information is missing, could be provided by the user. As we only know the instrument types that appear in the mixture, we built a musical instrument database, see Table 1 for the details. The music pieces are stored in the free lossless audio codec (FLAC) for- mat with a sampling rate of 48kHz and contain solo performances of the instruments. For each instrument type we have several ﬁles stemming from different musicians with different instruments play- ing classical masterpieces. These variations are important as we only know the instrument types and, hence, the DNN should generalize well to new instruments of the same type. For the DNN training, we ﬁrst load from the instrument database all audio ﬁles of the instruments that occur in the mixture and resam- ple them to a lower DNN system sampling rate, where the sampling rate is chosen such that the computational complexity of the total DNN system is reduced. In a second step, we convert all signals into the frequency domain using a STFT and randomly sample from the target and background instruments P complex-valued STFT vectors n ˜s(1), . . . ,˜s(P )o and n ˜v(1) i , . . . , ˜v(P ) i o with i = 1, . . . , M where ˜s(p)∈C(2C+1)Land ˜v(p) i ∈C(2C+1)L, i.e., they also contain the 2C neighboring frames. These are now combined to form the DNN input/targets, i.e., x(p)= 1 γ(p) α(p)˜s(p) + M X i=1 α(p) i ˜v(p) i , (3a) 2136
-s(p)=α(p) γ(p) S ˜s(p) , (3b) where γ(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in α(p)˜s(p) + PM i=1α(p) i ˜v(p) i and S ∈RL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0 . The scalars α(p), α(p) 1, . . . , α(p) Mdenote the random amplitudes of each instru- ment which stem from a uniform distribution with support [0.01, 1]. The normalization γ(p)is used to yield a DNN input that is inde- pendent of different amplitude levels of the mixture. Please note, however, that each instrument inside the mixture has a different amplitude α(p), α(p) 1, . . . , α(p) M, i.e., the DNN learns to extract the target instrument even if it has a varying amplitude compared to the background instruments. 2.3. DNN Training Using the dataset that we generated as outlined above, we can learn the network weights such that the sum-of-squared errors (SSE) be- tween the P targets s(p)and the DNN outputs ˆs(p)is minimized4. Due to the special network structure and the use of ReLU (cf. Sec. 2.1), we can perform a layer-wise training of the DNN. Each time a new layer is added, we ﬁrst initialize the weights using least squares estimates of Wk and bk by neglecting the nonlinear rectiﬁer function. As the target vectors s(p)are non-negative, we know that the SSE after adding the ReLU activation function can not increase and, hence, using the least-squares solution as initialization results in a good starting point for the L-BFGS solver that we then use. In the following, we will now describe in more details the two steps that we perform if a new layer is added: (a) Weight initialization: For the kth layer, we solve the optimization problem {Winit k, binit k} = arg min Wk,bk P X p=1 s(p) −  Wkx(p) k + bk  2 (4) where x(p) k denotes either the pth DNN input for k = 1 or the output of the (k −1)th layer if k > 1. Using (4), we choose the initial weights of the network such that they are the optimal linear least squares reconstruction of the targets {s(p)}p=1,...,P from the fea- tures {x(p) k}p=1,...,P . As we know that all elements of the target vector s(p)are non-negative, it is obvious that the total error can not increase by adding the ReLU activation function and, therefore, this initialization is a good starting point for the iterative training in step (b). The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k. (b) L-BFGS training: Starting from the initialization (a), we use a L-BFGS training with the SSE cost function to update the complete network, i.e., to update {W1, b1}, . . ., {Wk, bk}. 4We also tested the weighted Euclidean distance [19] as it showed good results for speech enhancement. However, we could not see an improvement and therefore use the SSE cost function in the following. These two steps are done K times in order to result in a network with K ReLU layers. Finally, after adding all layers, we do a ﬁne tuning of the complete network, where we again use L-BFGS. Using this procedure, we train the DNN as a denoising network as each layer, when it is added to the network, tries to recover the original targets s(p)from the output of the previous layer. This is similar to stacked denoising autoencoders, see [20, 21]. In our ex- periments, we have noticed that using the least squares initialization is advantageous with respect to the following two aspects if com- pared to a random initialization: First, it reduces the training time for the network considerably as we start the L-BFGS optimizer from a good initial value and, second, we found that we do not have the problem of converging to poor local minima which was sometimes the case for the random initialization. In the next section, we will show the beneﬁt of using the proposed initialization. 3. SEPARATION RESULTS In the following, we will now give results for the proposed DNN ap- proach. We consider two monaural music mixtures from the TRIOS dataset [22], each composed of three instruments: the “Brahms” trio consisting of a horn, a piano and a violin and the “Lussier” trio with a bassoon, a piano and a trumpet. We use the following settings for our experiments: The DNN system sampling rate (cf. Sec. 2.2) was chosen to be 32kHz which is a compromise between the audio quality of the extracted instru- ment and the DNN training time. For each frame, we have L = 513 magnitude values and we augment the input vector by C = 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN. Hence, one DNN input vector x has a length of (2C + 1)L = 3591 elements and corresponds to 224 milliseconds of the mixture signal. For the training, we use P = 106samples and the gen- erated training material has thus a length of 62.2 hours. During the layerwise training, we use 600 L-BFGS iterations for each new layer and the ﬁnal ﬁne tuning consists of 3000 additional L-BFGS iterations for the complete network such that in total we execute 5  600 + 3000 = 6000 L-BFGS iterations. Table 2 shows the BSS Eval values [23], i.e., the signal-to- distortion ratio (SDR), signal-to-interference ratio (SIR) and signal- to-artifact ratio (SAR) values after the addition of each ReLU layer. Besides the raw DNN outputs, we also give the BSS Eval values if we use a Wiener ﬁlter to combine the DNN outputs of the three instruments. This additional post-processing step allows an en- hancement of the source separation results since, from the raw DNN outputs, it computes for each instrument a softmask and applies it to the original mixture spectrogram. Looking at the results in Table 2, we can see that there is a noticeable improvement when adding the ﬁrst three layers but the difference becomes smaller for additional layers. For “Brahms”, the best results are obtained after adding all ﬁve layers and performing the ﬁnal ﬁne tuning. This is different for “Lussier”: For the trumpet, we can see that the network is starting to overﬁt to the training set when adding more than three layers as the SDR/SIR values start to decrease. The problem is the limited amount of material for the trumpet (22.5 minutes of solo performances, see Table 1), which is too small. Interestingly, also the DNNs for the other two instruments start to overﬁt which is probably also due to the trumpet in the mixture. From the results we can conclude that having sufﬁcient material for each instrument is vital if only the instrument type is known since only this ensures a good source separation quality and avoids overﬁtting. Table 3 shows for comparison the BSS Eval results for three unsupervised NMF based source separation approaches: • “MFCC kmeans [17]”: This approach uses a Mel ﬁlter bank of size 30 which is applied to the frequency basis vectors of the NMF decomposition in order to compute MFCCs. These are 2137
-Instrument Output After 1st layer After 2nd layer After 3rd layer After 4th layer After 5th layer After ﬁne tuning SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn Raw output 3.30 4.79 9.93 5.15 8.19 8.73 5.29 8.50 8.69 5.38 8.66 8.69 5.53 9.19 8.47 5.70 9.57 8.44 WF output 4.05 5.63 10.25 6.36 10.20 9.08 6.51 10.81 8.87 6.58 10.99 8.87 6.71 11.44 8.79 6.80 11.68 8.79 Piano Raw output 0.85 1.93 9.58 2.34 4.37 7.97 3.16 6.60 6.64 3.26 6.61 6.82 3.34 6.86 6.71 3.47 7.34 6.51 WF output 2.62 4.54 8.41 4.13 7.53 7.49 4.36 9.07 6.66 4.40 9.13 6.67 4.47 9.41 6.62 4.68 10.13 6.54 Violin Raw output −0.23 1.88 6.11 3.06 9.52 4.63 3.49 9.21 5.33 3.50 9.23 5.34 3.57 9.44 5.33 3.90 10.34 5.41 WF output 3.62 8.57 5.86 5.27 14.10 6.05 6.04 15.19 6.74 6.08 15.30 6.76 6.02 15.36 6.68 6.11 15.60 6.75 Lussier Bassoon Raw output 3.05 5.48 7.82 3.47 6.51 7.32 3.62 7.00 7.07 3.68 7.14 7.04 3.72 7.31 6.96 3.39 7.08 6.60 WF output 4.38 7.55 7.94 4.40 9.38 6.53 4.36 9.71 6.30 4.42 9.75 6.36 4.34 9.75 6.26 3.92 9.37 5.85 Piano Raw output 1.57 3.30 8.08 1.69 4.06 6.90 1.87 4.21 7.08 1.94 4.31 7.06 1.93 4.38 6.92 1.97 4.65 6.61 WF output 3.12 6.07 7.14 3.33 6.60 6.95 3.23 6.44 6.94 3.32 6.64 6.89 3.27 6.69 6.75 2.99 6.64 6.29 Trumpet Raw output 5.01 9.37 7.47 6.28 11.26 8.25 6.61 11.67 8.51 6.56 11.54 8.52 6.55 11.57 8.49 6.38 11.49 8.27 WF output 6.00 10.18 8.49 7.14 12.86 8.71 7.38 13.55 8.77 7.23 13.43 8.62 7.22 13.49 8.58 7.23 13.54 8.57 Table 2: BSS Eval results for DNN instrument extraction (“Brahms” and “Lussier” trio, all values are given in dB) Instrument MFCC kmeans [17] Mel NMF [17] Shifted-NMF [18] DNN with WF SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn 3.87 5.76 9.41 4.17 5.83 10.17 2.95 3.34 15.20 6.80 11.68 8.79 Piano 3.30 4.42 10.76 −0.10 0.21 14.39 3.78 5.59 9.50 4.68 10.13 6.54 Violin −8.35 −7.89 10.21 9.69 19.79 10.19 7.66 10.96 10.74 6.11 15.60 6.75 Average −0.39 0.76 10.13 4.59 8.61 11.58 4.80 6.63 11.81 5.86 12.47 7.36 Lussier Bassoon 1.85 11.67 2.61 0.15 0.75 11.72 −0.83 −0.60 15.43 3.92 9.37 5.85 Piano 4.66 6.28 10.64 4.56 8.00 7.83 2.54 5.14 7.16 2.99 6.64 6.29 Trumpet −1.73 −1.29 12.18 8.46 18.12 9.05 6.57 7.39 14.95 7.23 13.54 8.57 Average 1.59 5.55 8.48 4.39 8.96 9.53 2.76 3.98 12.51 4.71 9.85 6.90 Table 3: Comparison of BSS Eval results (all values are given in dB) then clustered via kmeans. For the Mel ﬁlter bank, we use the implementation [24] of [25]. • “Mel NMF [17]”: This approach also applies a Mel ﬁlter bank of size 30 to the original frequency basis vectors and uses a sec- ond NMF to perform the clustering. • “Shifted-NMF [18]”: For this approach, we use a constant Q transform matrix with minimal frequency 55 Hz and 24 fre- quency bins per octave. The shifted-NMF decomposition is al- lowed to use a maximum of 24 shifts. The constant Q transform source code was kindly provided by D. FitzGerald and we use the Tensor toolbox [26,27] for the shifted-NMF implementation. The best SDR values in Table 3 are emphasized in bold face and we can observe that, although our DNN approach not always gives the best individual SDR per instrument, it has the best average SDR for both mixtures since it is capable of extracting three sources with similar quality. This is not the case for the NMF approaches which have one instrument with a low SIR value, i.e., one instrument that is not well separated from the others.5 In order to see the beneﬁt of the least squares initialization from Sec. 2.3 we show in Fig. 2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec. 2.2. The denominator of J gives the SSE of a baseline system where the DNN is perform- ing an identity transform. From Fig. 2 we can see that the error is signiﬁcantly decreased whenever a new layer is added as the error J exhibits downward “jumps”. These “jumps” are due to the least squares initialization of the network weights. For example, consider the training error in Fig. 2 of the network that extracts the piano: When the ﬁrst layer is added, we have an initial error of J = 0.23, which means that, using the least squares initialization from Sec. 2.3, we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1 = 0. Would we have used the 5Please note that the considered NMF approaches are only assuming to know the number of sources, i.e., they use less prior knowledge than our DNN approach. We also tried the supervised NMF approach from [28] where the frequency basis vectors are pre-trained on our instrument database. How- ever, this supervised NMF approach resulted in signiﬁcant worse SDR values as the learned frequency bases for the instruments are correlated which intro- duces interference. 600 1200 1800 2400 3000 6000 0.08 0.1 0.12 0.14 0.16 0.18 0.2 0.22 Number of L−BFGS iterations Normalized training error J 2nd layer added 3rd layer added 4th layer added 5th layer added Start fine tuning Piano Horn Violin Fig. 2: Evolution of training error for “Brahms” baseline initialization, then a simulation showed that it would have taken us 980 additional L-BFGS iterations to reach the error value of the least squares initialization. These L-BFGS iterations can be saved and, therefore, we converge much faster to a network with a good instrument extraction performance. 4. CONCLUSIONS AND FUTURE WORK In this paper, we used a deep neural network for the extraction of an instrument from music. Using only the knowledge of the instrument types, we generated the training data from a database with solo in- strument performances and the network is trained layer-wise with a least-squares initialization of the weights. During our experiments, we noticed that the material length and quality of the solo performances is important as only sufﬁcient ma- terial allows the neural network to generalize to new, i.e., before unseen, instruments. We therefore plan to incorporate the “RWC Music Instrument Sounds” database [29] as it contains high quality samples from many instruments. Furthermore, our data generation process in Sec. 2.2 currently does not exploit music theory when generating the mixtures and we think that, taking such knowledge into account, should generate training data that is better suited for the instrument extraction task. 2138
-5. REFERENCES [1] P. Comon and C. Jutten, Eds., Handbook of Blind Source Sep- aration: Independent Component Analysis and Applications, Academic Press, 2010. [2] G. R. Naik and W. Wang, Eds., Blind Source Separation: Advances in Theory, Algorithms and Applications, Springer, 2014. [3] Z. Raﬁi and B. Pardo, “Repeating pattern extraction technique (REPET): A simple method for music/voice separation,” IEEE Transactions on Audio, Speech, and Language Processing, vol. 21, no. 1, pp. 73–84, 2013. [4] J.-L. Durrieu, B. David, and G. Richard, “A musically moti- vated mid-level representation for pitch estimation and musical audio source separation,” IEEE Journal on Selected Topics on Signal Processing, vol. 5, pp. 1180–1191, 2011. [5] D. FitzGerald, “Upmixing from mono - a source separation ap- proach,” Proc. 17th International Conference on Digital Signal Processing, 2011. [6] D. FitzGerald, “The good vibrations problem,” 134th AES Convention, e-brief, 2013. [7] A. Krizhevsky, I. Sutskever, and G. E. Hinton, “Imagenet clas- siﬁcation with deep convolutional neural networks,” in Ad- vances in neural information processing systems, 2012, pp. 1097–1105. [8] C. Farabet, C. Couprie, L. Najman, and Y. LeCun, “Learning hierarchical features for scene labeling,” IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 35, no. 8, pp. 1915–1929, 2013. [9] G. Hinton, L. Deng, D. Yu, G. E. Dahl, A.-R. Mohamed, N. Jaitly, A. Senior, V. Vanhoucke, P. Nguyen, T. N. Sainath, et al., “Deep neural networks for acoustic modeling in speech recognition: The shared views of four research groups,” IEEE Signal Processing Magazine, vol. 29, no. 6, pp. 82–97, 2012. [10] E. M. Grais, M. U. Sen, and H. Erdogan, “Deep neu- ral networks for single channel source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Process- ing (ICASSP), pp. 3734–3738, 2014. [11] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Deep learning for monaural speech sepa- ration,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 1562–1566, 2014. [12] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Singing-voice separation from monaural recordings using deep recurrent neural networks,” Interna- tional Society for Music Information Retrieval Conference (ISMIR), 2014. [13] X. Glorot, A. Bordes, and Y. Bengio, “Deep sparse rectiﬁer networks,” Proceedings of the 14th International Conference on Artiﬁcial Intelligence and Statistics, vol. 15, pp. 315–323, 2011. [14] M. D. Zeiler, M. Ranzato, R. Monga, M. Mao, K. Yang, Q. V. Le, P. Nguyen, A. Senior, V. Vanhoucke, J. Dean, et al., “On rectiﬁed linear units for speech processing,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 3517–3521, 2013. [15] B. Yang, “A study of inverse short-time Fourier transform,” Proc. IEEE Conference on Acoustics, Speech, and Signal Pro- cessing (ICASSP), pp. 3541–3544, 2008. [16] P. Smaragdis and G. J. Mysore, “Separation by “humming”: User-guided sound extraction from monophonic mixtures,” IEEE Workshop on Applications of Signal Processing to Au- dio and Acoustics, pp. 69–72, 2009. [17] M. Spiertz and V. Gnann, “Source-ﬁlter based clustering for monaural blind source separation,” Proc. Int. Conference on Digital Audio Effects, 2009. [18] R. Jaiswal, D. FitzGerald, D. Barry, E. Coyle, and S. Rickard, “Clustering NMF basis functions using shifted NMF for monaural sound source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 245– 248, 2011. [19] P. C. Loizou, “Speech enhancement based on perceptually mo- tivated Bayesian estimators of the magnitude spectrum,” IEEE Transactions on Speech and Audio Processing, vol. 13, no. 5, pp. 857–869, 2005. [20] P. Vincent, H. Larochelle, Y. Bengio, and P.-A. Manzagol, “Ex- tracting and composing robust features with denoising autoen- coders,” Proceedings of the International Conference on Ma- chine Learning, pp. 1096–1103, 2008. [21] M. Chen, Z. Xu, K. Weinberger, and F. Sha, “Marginalized denoising autoencoders for domain adaptation,” Proceedings of the International Conference on Machine Learning, 2012. [22] J. Fritsch, “High quality musical audio source separation,” Master’s Thesis, UPMC / IRCAM / Telecom ParisTech, 2012. [23] E. Vincent, R. Gribonval, and C. Fevotte, “Performance mea- surement in blind audio source separation,” IEEE Transactions on Audio, Speech and Language Processing, vol. 14, no. 4, pp. 1462–1469, 2006. [24] P. Brady, “Matlab Mel ﬁlter implementation,” http://www.mathworks.com/matlabcentral/ fileexchange/23179-melfilter, 2014, [Online]. [25] F. Zheng, G. Zhang, and Z. Song, “Comparison of different implementations of MFCC,” Journal of Computer Science and Technology, vol. 16, no. 6, pp. 582–589, September 2001. [26] B. W. Bader and T. G. Kolda, “MATLAB tensor toolbox version 2.5,” http://www.sandia.gov/˜tgkolda/ TensorToolbox/, January 2012, [Online]. [27] B. W. Bader and T. G. Kolda, “Algorithm 862: MATLAB ten- sor classes for fast algorithm prototyping,” ACM Transactions on Mathematical Software, vol. 32, no. 4, pp. 635–653, De- cember 2006. [28] E. M. Grais and H. Erdogan, “Single channel speech music separation using nonnegative matrix factorization and spectral mask,” Digital Signal Processing (DSP), 2011 17th Interna- tional Conference on IEEE, pp. 1–6, 2011. [29] M. Goto, H. Hashiguchi, T. Nishimura, and R. Oka, “RWC Music Database: Music Genre Database and Musical Instru- ment Sound Database,” Proc. of the International Conference on Music Information Retrieval (ISMIR), pp. 229–230, 2003. 2139 View publication stats
-
-## Images
-
-### Image 1
-**Description:** small rectangular grayscale image (64x64)
-![Image 1](page_1_img_1_0f58f9aa.png)
-**Dimensions:** 64x64
-
-### Image 2
-**Description:** small rectangular color image (64x64)
-![Image 2](page_1_img_2_87e4f64c.png)
-**Dimensions:** 64x64
-
-### Image 3
-**Description:** small rectangular color image (64x64)
-![Image 3](page_1_img_3_1be6f0da.png)
-**Dimensions:** 64x64
-
-
-## Tables
-
-### Table 1
-| See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper · April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS READS 138 4,160 3 authors: Stefan Uhlich Franck Giron University of Stuttgart Sony Europe B.V., Zwg. Deutschland 67 PUBLICATIONS 1,229 CITATIONS 8 PUBLICATIONS 380 CITATIONS SEE PROFILE SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175 PUBLICATIONS 2,294 CITATIONS SEE PROFILE |  |
-| --- | --- |
-| All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file. |  |
-
-### Table 2
-| Instrument | Numberoffiles (=bVariations) | Materiallength |
-| --- | --- | --- |
-| Bassoon Cello Clarinet Horn Piano Saxophone Trumpet Viola Violin | 18 6 14 14 89 19 16 13 12 | 1.44hours 1.88hours 1.15hours 0.82hours 6.12hours 1.16hours 0.38hours 1.61hours 5.60hours |
-
-### Table 3
-| Instrument Output | After1stlayer SDR SIR SAR | After2ndlayer SDR SIR SAR | After3rdlayer SDR SIR SAR | After4thlayer SDR SIR SAR | After5thlayer SDR SIR SAR | Afterfinetuning SDR SIR SAR |
-| --- | --- | --- | --- | --- | --- | --- |
-| Rawoutput Horn WFoutput smharB Rawoutput Piano WFoutput Rawoutput Violin WFoutput | 3.30 4.79 9.93 4.05 5.63 10.25 | 5.15 8.19 8.73 6.36 10.20 9.08 | 5.29 8.50 8.69 6.51 10.81 8.87 | 5.38 8.66 8.69 6.58 10.99 8.87 | 5.53 9.19 8.47 6.71 11.44 8.79 | 5.70 9.57 8.44 6.80 11.68 8.79 |
-|  | 0.85 1.93 9.58 2.62 4.54 8.41 | 2.34 4.37 7.97 4.13 7.53 7.49 | 3.16 6.60 6.64 4.36 9.07 6.66 | 3.26 6.61 6.82 4.40 9.13 6.67 | 3.34 6.86 6.71 4.47 9.41 6.62 | 3.47 7.34 6.51 4.68 10.13 6.54 |
-|  | −0.23 1.88 6.11 3.62 8.57 5.86 | 3.06 9.52 4.63 5.27 14.10 6.05 | 3.49 9.21 5.33 6.04 15.19 6.74 | 3.50 9.23 5.34 6.08 15.30 6.76 | 3.57 9.44 5.33 6.02 15.36 6.68 | 3.90 10.34 5.41 6.11 15.60 6.75 |
-| Rawoutput Bassoon WFoutput reissuL Rawoutput Piano WFoutput Rawoutput Trumpet WFoutput | 3.05 5.48 7.82 4.38 7.55 7.94 | 3.47 6.51 7.32 4.40 9.38 6.53 | 3.62 7.00 7.07 4.36 9.71 6.30 | 3.68 7.14 7.04 4.42 9.75 6.36 | 3.72 7.31 6.96 4.34 9.75 6.26 | 3.39 7.08 6.60 3.92 9.37 5.85 |
-|  | 1.57 3.30 8.08 3.12 6.07 7.14 | 1.69 4.06 6.90 3.33 6.60 6.95 | 1.87 4.21 7.08 3.23 6.44 6.94 | 1.94 4.31 7.06 3.32 6.64 6.89 | 1.93 4.38 6.92 3.27 6.69 6.75 | 1.97 4.65 6.61 2.99 6.64 6.29 |
-|  | 5.01 9.37 7.47 6.00 10.18 8.49 | 6.28 11.26 8.25 7.14 12.86 8.71 | 6.61 11.67 8.51 7.38 13.55 8.77 | 6.56 11.54 8.52 7.23 13.43 8.62 | 6.55 11.57 8.49 7.22 13.49 8.58 | 6.38 11.49 8.27 7.23 13.54 8.57 |
-
-### Table 4
-| Instrument | MFCCkmeans[17] SDR SIR SAR | MelNMF[17] SDR SIR SAR | Shifted-NMF[18] SDR SIR SAR | DNNwithWF SDR SIR SAR |
-| --- | --- | --- | --- | --- |
-| Horn smharB Piano Violin Average | 3.87 5.76 9.41 3.30 4.42 10.76 −8.35 −7.89 10.21 | 4.17 5.83 10.17 −0.10 0.21 14.39 9.69 19.79 10.19 | 2.95 3.34 15.20 3.78 5.59 9.50 7.66 10.96 10.74 | 6.80 11.68 8.79 4.68 10.13 6.54 6.11 15.60 6.75 |
-|  | −0.39 0.76 10.13 | 4.59 8.61 11.58 | 4.80 6.63 11.81 | 5.86 12.47 7.36 |
-| Bassoon reissuL Piano Trumpet Average | 1.85 11.67 2.61 4.66 6.28 10.64 −1.73 −1.29 12.18 | 0.15 0.75 11.72 4.56 8.00 7.83 8.46 18.12 9.05 | −0.83 −0.60 15.43 2.54 5.14 7.16 6.57 7.39 14.95 | 3.92 9.37 5.85 2.99 6.64 6.29 7.23 13.54 8.57 |
-|  | 1.59 5.55 8.48 | 4.39 8.96 9.53 | 2.76 3.98 12.51 | 4.71 9.85 6.90 |
-
-### Table 5
-|  |  |  |  |  | dedda r |  |  | dedda r |  |  | dedda r |  |  | gninut e |  | Piano Horn Violin |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-|  |  |  |  | dr | eyal |  | ht | eyal |  | ht | eyal |  |  | nif trat |  |  |
-|  |  |  |  |  | 3 |  |  | 4 |  |  | 5 |  |  | S |  |  |
-|  |  | d |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  | edda |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | d | reyal |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-
-
-## Mathematical Formulas
-
-### Formula 1
-```latex
-i=1 vi(n)
-```
-
-### Formula 2
-```latex
-\frac{8}{15}
-```
-
-### Formula 3
-```latex
-= s(n) + M X i
-```
-
-### Formula 4
-```latex
-=1 vi(n)
-```
-
-### Formula 5
-```latex
-2135 978-1-4673-6997-\frac{8}{15}/$31.00 2015 IEEE ICASSP 2015
-```
-
-### Formula 6
-```latex
-k = 1
-```
-
-### Formula 7
-```latex
-k=1
-```
-
-### Formula 8
-```latex
-p=1
-```
-
-### Formula 9
-```latex
-b= Variations) Bassoon 18 1
-```
-
-### Formula 10
-```latex
-i = 1
-```
-
-### Formula 11
-```latex
-i=1
-```
-
-### Formula 12
-```latex
-> 0 in order to make it independent of different amplitude levels of the mixture x(n) where
-```
-
-### Formula 13
-```latex
-1 = max (Wkxk + bk
-```
-
-### Formula 14
-```latex
-i o with i = 1
-```
-
-### Formula 15
-```latex
-= 1
-```
-
-### Formula 16
-```latex
-M X i=1
-```
-
-### Formula 17
-```latex
-Mixture x(n) ..
-```
-
-### Formula 18
-```latex
-,˜s(P )o and n ˜v(1) i ,
-```
-
-### Formula 19
-```latex
-, ˜v(P ) i o with i = 1,
-```
-
-### Formula 20
-```latex
-, M where ˜s(p)\inC(2C+1)Land ˜v(p) i \inC(2C+1)L, i.e., they also contain the 2C neighboring frames
-```
-
-### Formula 21
-```latex
-These are now combined to form the DNN input/targets, i.e., x(p)= 1 \gamma(p) \alpha(p)˜s(p) + M X i=1 \alpha(p) i ˜v(p) i , (3a) 2136
-```
-
-### Formula 22
-```latex
-i=1
-```
-
-### Formula 23
-```latex
-S = 0    0 I 0    0
-```
-
-### Formula 24
-```latex
-p=1 s(p)
-```
-
-### Formula 25
-```latex
-k = 1 or the output of the (k
-```
-
-### Formula 26
-```latex
-p=1
-```
-
-### Formula 27
-```latex
-k = CsxC
-```
-
-### Formula 28
-```latex
-k= s
-```
-
-### Formula 29
-```latex
-x = P X p
-```
-
-### Formula 30
-```latex
-s =1 P PP p
-```
-
-### Formula 31
-```latex
-k = 1 P PP p
-```
-
-### Formula 32
-```latex
-L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 33
-```latex
-L = 3591 elements and corresponds to 224 milliseconds of the mixture signal
-```
-
-### Formula 34
-```latex
-P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 35
-```latex
-> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in
-```
-
-### Formula 36
-```latex
-PM i=1
-```
-
-### Formula 37
-```latex
-= arg min Wk
-```
-
-### Formula 38
-```latex
-bk P X p=1 s(p)
-```
-
-### Formula 39
-```latex
-k denotes either the pth DNN input for k = 1 or the output of the (k
-```
-
-### Formula 40
-```latex
-form and the solution is given by Winit k = CsxC
-```
-
-### Formula 41
-```latex
-binit k= s
-```
-
-### Formula 42
-```latex
-with Csx = P X p
-```
-
-### Formula 43
-```latex
-=1  s(p)
-```
-
-### Formula 44
-```latex
-Cxx = P X p
-```
-
-### Formula 45
-```latex
-=1  x(p) k
-```
-
-### Formula 46
-```latex
-and s =1 P PP p
-```
-
-### Formula 47
-```latex
-=1s(p)
-```
-
-### Formula 48
-```latex
-xk = 1 P PP p
-```
-
-### Formula 49
-```latex
-=1x(p) k
-```
-
-### Formula 50
-```latex
-we have L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 51
-```latex
-= 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN
-```
-
-### Formula 52
-```latex
-we use P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 53
-```latex
-3000 = 6000 L-BFGS iterations
-```
-
-### Formula 54
-```latex
-s(p)=\alpha(p) \gamma(p) S ˜s(p) , (3b) where \gamma(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in \alpha(p)˜s(p) + PM i=1\alpha(p) i ˜v(p) i and S \inRL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0
-```
-
-### Formula 55
-```latex
-The scalars \alpha(p), \alpha(p) 1,
-```
-
-### Formula 56
-```latex
-The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k
-```
-
-### Formula 57
-```latex
-., {Wk, bk}
-```
-
-### Formula 58
-```latex
-J = (PP p
-```
-
-### Formula 59
-```latex
-p=1
-```
-
-### Formula 60
-```latex
-J = 0
-```
-
-### Formula 61
-```latex
-2 the evolution of the normalized DNN training error J = (PP p
-```
-
-### Formula 62
-```latex
-=1
-```
-
-### Formula 63
-```latex
-PP p=1
-```
-
-### Formula 64
-```latex
-we have an initial error of J = 0
-```
-
-### Formula 65
-```latex
-we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1
-```
-
-### Formula 66
-```latex
-= 0
-```
-
-### Formula 67
-```latex
-2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec
-```
-
-### Formula 68
-```latex
-REFERENCES [1] P
-```
-
-### Formula 69
-```latex
-[2] G
-```
-
-### Formula 70
-```latex
-[3] Z
-```
-
-### Formula 71
-```latex
-[4] J.-L
-```
-
-### Formula 72
-```latex
-[5] D
-```
-
-### Formula 73
-```latex
-[6] D
-```
-
-### Formula 74
-```latex
-[7] A
-```
-
-### Formula 75
-```latex
-[8] C
-```
-
-### Formula 76
-```latex
-[9] G
-```
-
-### Formula 77
-```latex
-[10] E
-```
-
-### Formula 78
-```latex
-[11] P.-S
-```
-
-### Formula 79
-```latex
-[12] P.-S
-```
-
-### Formula 80
-```latex
-[13] X
-```
-
-### Formula 81
-```latex
-[14] M
-```
-
-### Formula 82
-```latex
-[15] B
-```
-
-### Formula 83
-```latex
-[16] P
-```
-
-### Formula 84
-```latex
-[17] M
-```
-
-### Formula 85
-```latex
-[18] R
-```
-
-### Formula 86
-```latex
-[19] P
-```
-
-### Formula 87
-```latex
-[20] P
-```
-
-### Formula 88
-```latex
-[21] M
-```
-
-### Formula 89
-```latex
-[22] J
-```
-
-### Formula 90
-```latex
-[23] E
-```
-
-### Formula 91
-```latex
-[24] P
-```
-
-### Formula 92
-```latex
-[25] F
-```
-
-### Formula 93
-```latex
-[26] B
-```
-
-### Formula 94
-```latex
-[27] B
-```
-
-### Formula 95
-```latex
-[28] E
-```
-
-### Formula 96
-```latex
-[29] M
-```
-
-
-## Forms and Fields
-
-### Form 1
-
-### Form 2
-
-### Form 3
-
-### Form 4
-
-### Form 5
-
-
-
-
-
-### Data Sources
+### Data Analysis
 
 # test_document
 *Converted from PDF using PPARSER*
@@ -1745,4592 +216,336 @@ REFERENCES [1] P
 - [Forms](#forms)
 
 ## Content
-See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper  April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS 138 READS 4,160 3 authors: Stefan Uhlich University of Stuttgart 67PUBLICATIONS1,229CITATIONS SEE PROFILE Franck Giron Sony Europe B.V., Zwg. Deutschland 8PUBLICATIONS380CITATIONS SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175PUBLICATIONS2,294CITATIONS SEE PROFILE All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file.
-DEEP NEURAL NETWORK BASED INSTRUMENT EXTRACTION FROM MUSIC Stefan Uhlich1, Franck Giron1and Yuki Mitsufuji2 1 Sony European Technology Center (EuTEC), Stuttgart, Germany 2 Sony Corporation, Audio Technology Development Department, Tokyo, Japan ABSTRACT This paper deals with the extraction of an instrument from music by using a deep neural network. As prior information, we only as- sume to know the instrument types that are present in the mixture and, using this information, we generate the training data from a database with solo instrument performances. The neural network is built up from rectiﬁed linear units where each hidden layer has the same number of nodes as the output layer. This allows a least squares initialization of the layer weights and speeds up the training of the network considerably compared to a traditional random initializa- tion. We give results for two mixtures, each consisting of three in- struments, and evaluate the extraction performance using BSS Eval for a varying number of hidden layers. Index Terms— Deep neural network (DNN), Instrument extrac- tion, Blind source separation (BSS) 1. INTRODUCTION In this paper, we study the extraction of a target instrument s(n) ∈R from an instantaneous, monaural music mixture x(n) ∈R, i.e., of a mixture that can be written as x(n) = s(n) + M X i=1 vi(n), (1) where vi(n) is the time signal of the ith background instrument and the mixture consists thus in a total of M +1 instruments. From x(n) we want to extract an estimate ˆs(n) of the target instrument s(n) and, therefore, we can see instrument extraction as a special case of the general blind source separation (BSS) problem [1, 2]. Various applications require such an estimate ˆs(n) ranging from Karaoke systems which use a separation into a instruments and a vocal track, see [3, 4], to upmixing where one tries to obtain a multi-channel version of the monaural mixture x(n), see [5,6]. We propose a deep neural network (DNN) for the extraction of the target instrument s(n) from x(n) as DNNs have proved to work very well in various applications and have gained a lot of interest in the last years, especially for classiﬁcation tasks in image process- ing [7, 8] and for speech recognition [9]. We use the DNN in the frequency domain to estimate a target instrument from the mixture, i.e., we train the network such that we can think of it as a “denoiser” which converts the “noisy” mixture spectrogram to the “clean” in- strument spectrogram. For the training of the network, we only as- sume to know the instrument types of the target instrument s(n) and of the other background instruments v1(n), . . . , vM(n), for exam- ple that we want to extract a piano from a mixture with a violin and a horn. This is in contrast to other proposed DNN approaches for BSS of music which are supervised in the sense that they assume to have more knowledge about the signals [10–12]. Huang et. al. used in [11, 12] a deep (recurrent) neural network for the separa- tion of two sources where the neural network is extended by a ﬁnal softmask layer to extract the source estimates and it is trained using a discriminative cost function that also tries to decrease the interfer- ence by other sources. Whereas they only know the type of the target instrument (in their case: singing voice) in [12], they assume that the background is one of 110 known karaoke songs. In contrast, we only know the instrument types that appear in the mixture and, hence, we have to use a large instrument database with solo performances from various musicians and instruments. From this database, we generate the training data that allows us to generalize to new mixtures and this instrument database with the training data generation is thus a integral part of our DNN architecture. A second contribution of the paper is the efﬁcient training of the DNN: We propose a network architecture where each hidden rectiﬁed linear unit (ReLU) layer has the same number of nodes as the output layer. This allows a least squares initialization of the network weights of each layer and, using it as starting point for the limited-memory BFGS (L-BFGS) optimizer, yields a quicker convergence to good network weights. Additionally, we noticed that this initialization often results in ﬁnal network weights which have a smaller training error than if we start the training from randomly initialized weights as we ﬁnd better local minima. The remainder of this paper is organized as follows: In Sec. 2 we describe in detail the DNN based instrument extraction where in particular Sec. 2.1 explains the network structure, Sec. 2.2 shows the generation of the training data and Sec. 2.3 details the layer-wise training procedure. In Sec. 3, we give results for two music mixtures, each consisting of three instruments, before we conclude this paper in Sec. 4 where we summarize our work and give an outlook of future steps. The following notation is used throughout this paper: x denotes a column vector and X a matrix where in particular I is the identity matrix. The matrix transpose and Euclidean norm are denoted by (.)Tand ∥.∥, respectively. Furthermore, max (x, y) is the element- wise maximum operation between x and y, and |x| returns a vector with the element-wise magnitude values of x. 2. DNN BASED INSTRUMENT EXTRACTION 2.1. General Network Structure We will explain now the proposed DNN approach for extracting the target instrument s(n) from the mixture x(n), which is also depicted in Fig. 1. The extraction is done in the frequency domain and it consists of the following three steps: (a) Feature vector generation: We use a short-time Fourier trans- form (STFT) with (possibly overlapping) rectangular windows to transform the mixture signal x(n) into the frequency domain. From this frequency representation, we build a feature vector1 x ∈R(2C+1)Lby stacking the magnitude values of the current frame and the C preceding/succeeding frames where L gives the number of magnitude values per frame. The motivation for using also the 2C neighboring frames is to provide the DNN with tem- poral context that allows it to better extract the target instrument. Please note that these context frames are chosen such that they are 1For convenience, we use in the following a simpliﬁed notation and drop the frame index for x, xk, s, ˆx and γ. 2135 978-1-4673-6997-8/15/$31.00 2015 IEEE ICASSP 2015
-Mixture x(n) ... STFT ... Magnitude STFT frames of x(n) DNN input x ∈R(2C+1)L normalized by γ W1, b1 W2, b2    WK, bK DNN with K ReLU layers DNN output ˆs ∈RL rescaled with γ ... Magnitude STFT frames of ˆs(n) ISTFT ... Recovered instrument ˆs(n) Fig. 1: Instrument extraction using a deep neural network non-overlapping2. Finally, the input vector x is normalized by a scalar γ > 0 in order to make it independent of different amplitude levels of the mixture x(n) where γ is the average Euclidean norm of the 2C + 1 magnitude frames in x. (b) DNN instrument extraction: In a second step, the normalized STFT amplitude vector x is fed to a DNN, which consists of K layers with rectiﬁed linear units (ReLU), i.e., we have xk+1 = max (Wkxk + bk, 0) , k = 1, . . . , K (2) where xk denotes the input to the kth layer and in particular x1 is the DNN input x and xK+1 the DNN output ˆs. Each ReLU layer has L nodes and the network weights {Wk, bk}k=1,...,K are trained such that the DNN outputs an estimate ˆs of the magnitude frame s ∈RL of the target instrument from the mixture vector x. We can thus think of the DNN performing a denoising of the “noisy” mixture input. DNNs with ReLU activation functions have shown very good results, see for example [13, 14], and, as each layer has L hidden units, this activation function will allow us to use a layer-wise least squares initialization as will be shown in Sec. 2.3. (c) Reconstruction of the instrument: Using the phase of the original mixture STFT and multiplying each DNN output ˆs with the energy normalization γ that was applied to the corresponding input vector, we obtain an estimate of the STFT of the target instrument s(n), which we convert back into the time domain using an inverse STFT [15]. Note that the DNN outputs ˆs, i.e., the magnitude frames of the target instrument, will be overlapping as shown in Fig. 1 if the STFT in the ﬁrst step (a) was also using overlapping windows. Please refer to [15] for the ISTFT in this case. 2.2. Training Data Generation In order to train the weights {W1, b1}, . . . , {WK, bK} of the DNN, we need a training set {x(p), s(p)}p=1,...,P of P input/target pairs where x(p)∈R(2C+1)Lis a magnitude vector of the mixture with C preceding/succeeding frames and s(p)∈RLthe corre- sponding magnitude vector of the target instrument that we want to extract. In general, there are several possibilities to generate the required material for the DNN training, which differ in the prior knowledge that we have3: For the target instrument s(n), we either only know the instrument type (e.g., piano) or we have recordings from it. For the background instruments vi(n), we either have no knowledge, we know the instrument types that occur in the mixture or we even have 2E.g., if the STFT uses a overlap of 50%, then we only take every second frame to build the feature vector x. 3Beside the discussed cases, there is also the possibility that we have knowledge about the melody of the target instrument, see for example [16]. Instrument Number of ﬁles Material length (b= Variations) Bassoon 18 1.44 hours Cello 6 1.88 hours Clarinet 14 1.15 hours Horn 14 0.82 hours Piano 89 6.12 hours Saxophone 19 1.16 hours Trumpet 16 0.38 hours Viola 13 1.61 hours Violin 12 5.60 hours Table 1: Instrument database recordings of the particular instruments that occur in the mixture. The easiest case is when we have recordings of the instrument that we want to extract and of those that occur as background in the mix- ture. The most difﬁcult case is when we only know the type of the instrument that we want to extract and do not have any knowledge about the background instruments that will appear in the mixture. In this paper, we assume that we know the instrument types of the tar- get and background, e.g., we know that we want to extract a piano from a mixture with a horn and a violin. Using this prior knowl- edge is reasonable since for many songs, we either have metadata which provides information about the instruments that occur or, in case this information is missing, could be provided by the user. As we only know the instrument types that appear in the mixture, we built a musical instrument database, see Table 1 for the details. The music pieces are stored in the free lossless audio codec (FLAC) for- mat with a sampling rate of 48kHz and contain solo performances of the instruments. For each instrument type we have several ﬁles stemming from different musicians with different instruments play- ing classical masterpieces. These variations are important as we only know the instrument types and, hence, the DNN should generalize well to new instruments of the same type. For the DNN training, we ﬁrst load from the instrument database all audio ﬁles of the instruments that occur in the mixture and resam- ple them to a lower DNN system sampling rate, where the sampling rate is chosen such that the computational complexity of the total DNN system is reduced. In a second step, we convert all signals into the frequency domain using a STFT and randomly sample from the target and background instruments P complex-valued STFT vectors n ˜s(1), . . . ,˜s(P )o and n ˜v(1) i , . . . , ˜v(P ) i o with i = 1, . . . , M where ˜s(p)∈C(2C+1)Land ˜v(p) i ∈C(2C+1)L, i.e., they also contain the 2C neighboring frames. These are now combined to form the DNN input/targets, i.e., x(p)= 1 γ(p) α(p)˜s(p) + M X i=1 α(p) i ˜v(p) i , (3a) 2136
-s(p)=α(p) γ(p) S ˜s(p) , (3b) where γ(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in α(p)˜s(p) + PM i=1α(p) i ˜v(p) i and S ∈RL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0 . The scalars α(p), α(p) 1, . . . , α(p) Mdenote the random amplitudes of each instru- ment which stem from a uniform distribution with support [0.01, 1]. The normalization γ(p)is used to yield a DNN input that is inde- pendent of different amplitude levels of the mixture. Please note, however, that each instrument inside the mixture has a different amplitude α(p), α(p) 1, . . . , α(p) M, i.e., the DNN learns to extract the target instrument even if it has a varying amplitude compared to the background instruments. 2.3. DNN Training Using the dataset that we generated as outlined above, we can learn the network weights such that the sum-of-squared errors (SSE) be- tween the P targets s(p)and the DNN outputs ˆs(p)is minimized4. Due to the special network structure and the use of ReLU (cf. Sec. 2.1), we can perform a layer-wise training of the DNN. Each time a new layer is added, we ﬁrst initialize the weights using least squares estimates of Wk and bk by neglecting the nonlinear rectiﬁer function. As the target vectors s(p)are non-negative, we know that the SSE after adding the ReLU activation function can not increase and, hence, using the least-squares solution as initialization results in a good starting point for the L-BFGS solver that we then use. In the following, we will now describe in more details the two steps that we perform if a new layer is added: (a) Weight initialization: For the kth layer, we solve the optimization problem {Winit k, binit k} = arg min Wk,bk P X p=1 s(p) −  Wkx(p) k + bk  2 (4) where x(p) k denotes either the pth DNN input for k = 1 or the output of the (k −1)th layer if k > 1. Using (4), we choose the initial weights of the network such that they are the optimal linear least squares reconstruction of the targets {s(p)}p=1,...,P from the fea- tures {x(p) k}p=1,...,P . As we know that all elements of the target vector s(p)are non-negative, it is obvious that the total error can not increase by adding the ReLU activation function and, therefore, this initialization is a good starting point for the iterative training in step (b). The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k. (b) L-BFGS training: Starting from the initialization (a), we use a L-BFGS training with the SSE cost function to update the complete network, i.e., to update {W1, b1}, . . ., {Wk, bk}. 4We also tested the weighted Euclidean distance [19] as it showed good results for speech enhancement. However, we could not see an improvement and therefore use the SSE cost function in the following. These two steps are done K times in order to result in a network with K ReLU layers. Finally, after adding all layers, we do a ﬁne tuning of the complete network, where we again use L-BFGS. Using this procedure, we train the DNN as a denoising network as each layer, when it is added to the network, tries to recover the original targets s(p)from the output of the previous layer. This is similar to stacked denoising autoencoders, see [20, 21]. In our ex- periments, we have noticed that using the least squares initialization is advantageous with respect to the following two aspects if com- pared to a random initialization: First, it reduces the training time for the network considerably as we start the L-BFGS optimizer from a good initial value and, second, we found that we do not have the problem of converging to poor local minima which was sometimes the case for the random initialization. In the next section, we will show the beneﬁt of using the proposed initialization. 3. SEPARATION RESULTS In the following, we will now give results for the proposed DNN ap- proach. We consider two monaural music mixtures from the TRIOS dataset [22], each composed of three instruments: the “Brahms” trio consisting of a horn, a piano and a violin and the “Lussier” trio with a bassoon, a piano and a trumpet. We use the following settings for our experiments: The DNN system sampling rate (cf. Sec. 2.2) was chosen to be 32kHz which is a compromise between the audio quality of the extracted instru- ment and the DNN training time. For each frame, we have L = 513 magnitude values and we augment the input vector by C = 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN. Hence, one DNN input vector x has a length of (2C + 1)L = 3591 elements and corresponds to 224 milliseconds of the mixture signal. For the training, we use P = 106samples and the gen- erated training material has thus a length of 62.2 hours. During the layerwise training, we use 600 L-BFGS iterations for each new layer and the ﬁnal ﬁne tuning consists of 3000 additional L-BFGS iterations for the complete network such that in total we execute 5  600 + 3000 = 6000 L-BFGS iterations. Table 2 shows the BSS Eval values [23], i.e., the signal-to- distortion ratio (SDR), signal-to-interference ratio (SIR) and signal- to-artifact ratio (SAR) values after the addition of each ReLU layer. Besides the raw DNN outputs, we also give the BSS Eval values if we use a Wiener ﬁlter to combine the DNN outputs of the three instruments. This additional post-processing step allows an en- hancement of the source separation results since, from the raw DNN outputs, it computes for each instrument a softmask and applies it to the original mixture spectrogram. Looking at the results in Table 2, we can see that there is a noticeable improvement when adding the ﬁrst three layers but the difference becomes smaller for additional layers. For “Brahms”, the best results are obtained after adding all ﬁve layers and performing the ﬁnal ﬁne tuning. This is different for “Lussier”: For the trumpet, we can see that the network is starting to overﬁt to the training set when adding more than three layers as the SDR/SIR values start to decrease. The problem is the limited amount of material for the trumpet (22.5 minutes of solo performances, see Table 1), which is too small. Interestingly, also the DNNs for the other two instruments start to overﬁt which is probably also due to the trumpet in the mixture. From the results we can conclude that having sufﬁcient material for each instrument is vital if only the instrument type is known since only this ensures a good source separation quality and avoids overﬁtting. Table 3 shows for comparison the BSS Eval results for three unsupervised NMF based source separation approaches: • “MFCC kmeans [17]”: This approach uses a Mel ﬁlter bank of size 30 which is applied to the frequency basis vectors of the NMF decomposition in order to compute MFCCs. These are 2137
-Instrument Output After 1st layer After 2nd layer After 3rd layer After 4th layer After 5th layer After ﬁne tuning SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn Raw output 3.30 4.79 9.93 5.15 8.19 8.73 5.29 8.50 8.69 5.38 8.66 8.69 5.53 9.19 8.47 5.70 9.57 8.44 WF output 4.05 5.63 10.25 6.36 10.20 9.08 6.51 10.81 8.87 6.58 10.99 8.87 6.71 11.44 8.79 6.80 11.68 8.79 Piano Raw output 0.85 1.93 9.58 2.34 4.37 7.97 3.16 6.60 6.64 3.26 6.61 6.82 3.34 6.86 6.71 3.47 7.34 6.51 WF output 2.62 4.54 8.41 4.13 7.53 7.49 4.36 9.07 6.66 4.40 9.13 6.67 4.47 9.41 6.62 4.68 10.13 6.54 Violin Raw output −0.23 1.88 6.11 3.06 9.52 4.63 3.49 9.21 5.33 3.50 9.23 5.34 3.57 9.44 5.33 3.90 10.34 5.41 WF output 3.62 8.57 5.86 5.27 14.10 6.05 6.04 15.19 6.74 6.08 15.30 6.76 6.02 15.36 6.68 6.11 15.60 6.75 Lussier Bassoon Raw output 3.05 5.48 7.82 3.47 6.51 7.32 3.62 7.00 7.07 3.68 7.14 7.04 3.72 7.31 6.96 3.39 7.08 6.60 WF output 4.38 7.55 7.94 4.40 9.38 6.53 4.36 9.71 6.30 4.42 9.75 6.36 4.34 9.75 6.26 3.92 9.37 5.85 Piano Raw output 1.57 3.30 8.08 1.69 4.06 6.90 1.87 4.21 7.08 1.94 4.31 7.06 1.93 4.38 6.92 1.97 4.65 6.61 WF output 3.12 6.07 7.14 3.33 6.60 6.95 3.23 6.44 6.94 3.32 6.64 6.89 3.27 6.69 6.75 2.99 6.64 6.29 Trumpet Raw output 5.01 9.37 7.47 6.28 11.26 8.25 6.61 11.67 8.51 6.56 11.54 8.52 6.55 11.57 8.49 6.38 11.49 8.27 WF output 6.00 10.18 8.49 7.14 12.86 8.71 7.38 13.55 8.77 7.23 13.43 8.62 7.22 13.49 8.58 7.23 13.54 8.57 Table 2: BSS Eval results for DNN instrument extraction (“Brahms” and “Lussier” trio, all values are given in dB) Instrument MFCC kmeans [17] Mel NMF [17] Shifted-NMF [18] DNN with WF SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn 3.87 5.76 9.41 4.17 5.83 10.17 2.95 3.34 15.20 6.80 11.68 8.79 Piano 3.30 4.42 10.76 −0.10 0.21 14.39 3.78 5.59 9.50 4.68 10.13 6.54 Violin −8.35 −7.89 10.21 9.69 19.79 10.19 7.66 10.96 10.74 6.11 15.60 6.75 Average −0.39 0.76 10.13 4.59 8.61 11.58 4.80 6.63 11.81 5.86 12.47 7.36 Lussier Bassoon 1.85 11.67 2.61 0.15 0.75 11.72 −0.83 −0.60 15.43 3.92 9.37 5.85 Piano 4.66 6.28 10.64 4.56 8.00 7.83 2.54 5.14 7.16 2.99 6.64 6.29 Trumpet −1.73 −1.29 12.18 8.46 18.12 9.05 6.57 7.39 14.95 7.23 13.54 8.57 Average 1.59 5.55 8.48 4.39 8.96 9.53 2.76 3.98 12.51 4.71 9.85 6.90 Table 3: Comparison of BSS Eval results (all values are given in dB) then clustered via kmeans. For the Mel ﬁlter bank, we use the implementation [24] of [25]. • “Mel NMF [17]”: This approach also applies a Mel ﬁlter bank of size 30 to the original frequency basis vectors and uses a sec- ond NMF to perform the clustering. • “Shifted-NMF [18]”: For this approach, we use a constant Q transform matrix with minimal frequency 55 Hz and 24 fre- quency bins per octave. The shifted-NMF decomposition is al- lowed to use a maximum of 24 shifts. The constant Q transform source code was kindly provided by D. FitzGerald and we use the Tensor toolbox [26,27] for the shifted-NMF implementation. The best SDR values in Table 3 are emphasized in bold face and we can observe that, although our DNN approach not always gives the best individual SDR per instrument, it has the best average SDR for both mixtures since it is capable of extracting three sources with similar quality. This is not the case for the NMF approaches which have one instrument with a low SIR value, i.e., one instrument that is not well separated from the others.5 In order to see the beneﬁt of the least squares initialization from Sec. 2.3 we show in Fig. 2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec. 2.2. The denominator of J gives the SSE of a baseline system where the DNN is perform- ing an identity transform. From Fig. 2 we can see that the error is signiﬁcantly decreased whenever a new layer is added as the error J exhibits downward “jumps”. These “jumps” are due to the least squares initialization of the network weights. For example, consider the training error in Fig. 2 of the network that extracts the piano: When the ﬁrst layer is added, we have an initial error of J = 0.23, which means that, using the least squares initialization from Sec. 2.3, we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1 = 0. Would we have used the 5Please note that the considered NMF approaches are only assuming to know the number of sources, i.e., they use less prior knowledge than our DNN approach. We also tried the supervised NMF approach from [28] where the frequency basis vectors are pre-trained on our instrument database. How- ever, this supervised NMF approach resulted in signiﬁcant worse SDR values as the learned frequency bases for the instruments are correlated which intro- duces interference. 600 1200 1800 2400 3000 6000 0.08 0.1 0.12 0.14 0.16 0.18 0.2 0.22 Number of L−BFGS iterations Normalized training error J 2nd layer added 3rd layer added 4th layer added 5th layer added Start fine tuning Piano Horn Violin Fig. 2: Evolution of training error for “Brahms” baseline initialization, then a simulation showed that it would have taken us 980 additional L-BFGS iterations to reach the error value of the least squares initialization. These L-BFGS iterations can be saved and, therefore, we converge much faster to a network with a good instrument extraction performance. 4. CONCLUSIONS AND FUTURE WORK In this paper, we used a deep neural network for the extraction of an instrument from music. Using only the knowledge of the instrument types, we generated the training data from a database with solo in- strument performances and the network is trained layer-wise with a least-squares initialization of the weights. During our experiments, we noticed that the material length and quality of the solo performances is important as only sufﬁcient ma- terial allows the neural network to generalize to new, i.e., before unseen, instruments. We therefore plan to incorporate the “RWC Music Instrument Sounds” database [29] as it contains high quality samples from many instruments. Furthermore, our data generation process in Sec. 2.2 currently does not exploit music theory when generating the mixtures and we think that, taking such knowledge into account, should generate training data that is better suited for the instrument extraction task. 2138
-5. REFERENCES [1] P. Comon and C. Jutten, Eds., Handbook of Blind Source Sep- aration: Independent Component Analysis and Applications, Academic Press, 2010. [2] G. R. Naik and W. Wang, Eds., Blind Source Separation: Advances in Theory, Algorithms and Applications, Springer, 2014. [3] Z. Raﬁi and B. Pardo, “Repeating pattern extraction technique (REPET): A simple method for music/voice separation,” IEEE Transactions on Audio, Speech, and Language Processing, vol. 21, no. 1, pp. 73–84, 2013. [4] J.-L. Durrieu, B. David, and G. Richard, “A musically moti- vated mid-level representation for pitch estimation and musical audio source separation,” IEEE Journal on Selected Topics on Signal Processing, vol. 5, pp. 1180–1191, 2011. [5] D. FitzGerald, “Upmixing from mono - a source separation ap- proach,” Proc. 17th International Conference on Digital Signal Processing, 2011. [6] D. FitzGerald, “The good vibrations problem,” 134th AES Convention, e-brief, 2013. [7] A. Krizhevsky, I. Sutskever, and G. E. Hinton, “Imagenet clas- siﬁcation with deep convolutional neural networks,” in Ad- vances in neural information processing systems, 2012, pp. 1097–1105. [8] C. Farabet, C. Couprie, L. Najman, and Y. LeCun, “Learning hierarchical features for scene labeling,” IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 35, no. 8, pp. 1915–1929, 2013. [9] G. Hinton, L. Deng, D. Yu, G. E. Dahl, A.-R. Mohamed, N. Jaitly, A. Senior, V. Vanhoucke, P. Nguyen, T. N. Sainath, et al., “Deep neural networks for acoustic modeling in speech recognition: The shared views of four research groups,” IEEE Signal Processing Magazine, vol. 29, no. 6, pp. 82–97, 2012. [10] E. M. Grais, M. U. Sen, and H. Erdogan, “Deep neu- ral networks for single channel source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Process- ing (ICASSP), pp. 3734–3738, 2014. [11] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Deep learning for monaural speech sepa- ration,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 1562–1566, 2014. [12] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Singing-voice separation from monaural recordings using deep recurrent neural networks,” Interna- tional Society for Music Information Retrieval Conference (ISMIR), 2014. [13] X. Glorot, A. Bordes, and Y. Bengio, “Deep sparse rectiﬁer networks,” Proceedings of the 14th International Conference on Artiﬁcial Intelligence and Statistics, vol. 15, pp. 315–323, 2011. [14] M. D. Zeiler, M. Ranzato, R. Monga, M. Mao, K. Yang, Q. V. Le, P. Nguyen, A. Senior, V. Vanhoucke, J. Dean, et al., “On rectiﬁed linear units for speech processing,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 3517–3521, 2013. [15] B. Yang, “A study of inverse short-time Fourier transform,” Proc. IEEE Conference on Acoustics, Speech, and Signal Pro- cessing (ICASSP), pp. 3541–3544, 2008. [16] P. Smaragdis and G. J. Mysore, “Separation by “humming”: User-guided sound extraction from monophonic mixtures,” IEEE Workshop on Applications of Signal Processing to Au- dio and Acoustics, pp. 69–72, 2009. [17] M. Spiertz and V. Gnann, “Source-ﬁlter based clustering for monaural blind source separation,” Proc. Int. Conference on Digital Audio Effects, 2009. [18] R. Jaiswal, D. FitzGerald, D. Barry, E. Coyle, and S. Rickard, “Clustering NMF basis functions using shifted NMF for monaural sound source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 245– 248, 2011. [19] P. C. Loizou, “Speech enhancement based on perceptually mo- tivated Bayesian estimators of the magnitude spectrum,” IEEE Transactions on Speech and Audio Processing, vol. 13, no. 5, pp. 857–869, 2005. [20] P. Vincent, H. Larochelle, Y. Bengio, and P.-A. Manzagol, “Ex- tracting and composing robust features with denoising autoen- coders,” Proceedings of the International Conference on Ma- chine Learning, pp. 1096–1103, 2008. [21] M. Chen, Z. Xu, K. Weinberger, and F. Sha, “Marginalized denoising autoencoders for domain adaptation,” Proceedings of the International Conference on Machine Learning, 2012. [22] J. Fritsch, “High quality musical audio source separation,” Master’s Thesis, UPMC / IRCAM / Telecom ParisTech, 2012. [23] E. Vincent, R. Gribonval, and C. Fevotte, “Performance mea- surement in blind audio source separation,” IEEE Transactions on Audio, Speech and Language Processing, vol. 14, no. 4, pp. 1462–1469, 2006. [24] P. Brady, “Matlab Mel ﬁlter implementation,” http://www.mathworks.com/matlabcentral/ fileexchange/23179-melfilter, 2014, [Online]. [25] F. Zheng, G. Zhang, and Z. Song, “Comparison of different implementations of MFCC,” Journal of Computer Science and Technology, vol. 16, no. 6, pp. 582–589, September 2001. [26] B. W. Bader and T. G. Kolda, “MATLAB tensor toolbox version 2.5,” http://www.sandia.gov/˜tgkolda/ TensorToolbox/, January 2012, [Online]. [27] B. W. Bader and T. G. Kolda, “Algorithm 862: MATLAB ten- sor classes for fast algorithm prototyping,” ACM Transactions on Mathematical Software, vol. 32, no. 4, pp. 635–653, De- cember 2006. [28] E. M. Grais and H. Erdogan, “Single channel speech music separation using nonnegative matrix factorization and spectral mask,” Digital Signal Processing (DSP), 2011 17th Interna- tional Conference on IEEE, pp. 1–6, 2011. [29] M. Goto, H. Hashiguchi, T. Nishimura, and R. Oka, “RWC Music Database: Music Genre Database and Musical Instru- ment Sound Database,” Proc. of the International Conference on Music Information Retrieval (ISMIR), pp. 229–230, 2003. 2139 View publication stats
-
-## Images
-
-### Image 1
-**Description:** small rectangular grayscale image (64x64)
-![Image 1](page_1_img_1_0f58f9aa.png)
-**Dimensions:** 64x64
-
-### Image 2
-**Description:** small rectangular color image (64x64)
-![Image 2](page_1_img_2_87e4f64c.png)
-**Dimensions:** 64x64
-
-### Image 3
-**Description:** small rectangular color image (64x64)
-![Image 3](page_1_img_3_1be6f0da.png)
-**Dimensions:** 64x64
-
-
-## Tables
-
-### Table 1
-| See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper · April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS READS 138 4,160 3 authors: Stefan Uhlich Franck Giron University of Stuttgart Sony Europe B.V., Zwg. Deutschland 67 PUBLICATIONS 1,229 CITATIONS 8 PUBLICATIONS 380 CITATIONS SEE PROFILE SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175 PUBLICATIONS 2,294 CITATIONS SEE PROFILE |  |
-| --- | --- |
-| All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file. |  |
-
-### Table 2
-| Instrument | Numberoffiles (=bVariations) | Materiallength |
-| --- | --- | --- |
-| Bassoon Cello Clarinet Horn Piano Saxophone Trumpet Viola Violin | 18 6 14 14 89 19 16 13 12 | 1.44hours 1.88hours 1.15hours 0.82hours 6.12hours 1.16hours 0.38hours 1.61hours 5.60hours |
-
-### Table 3
-| Instrument Output | After1stlayer SDR SIR SAR | After2ndlayer SDR SIR SAR | After3rdlayer SDR SIR SAR | After4thlayer SDR SIR SAR | After5thlayer SDR SIR SAR | Afterfinetuning SDR SIR SAR |
-| --- | --- | --- | --- | --- | --- | --- |
-| Rawoutput Horn WFoutput smharB Rawoutput Piano WFoutput Rawoutput Violin WFoutput | 3.30 4.79 9.93 4.05 5.63 10.25 | 5.15 8.19 8.73 6.36 10.20 9.08 | 5.29 8.50 8.69 6.51 10.81 8.87 | 5.38 8.66 8.69 6.58 10.99 8.87 | 5.53 9.19 8.47 6.71 11.44 8.79 | 5.70 9.57 8.44 6.80 11.68 8.79 |
-|  | 0.85 1.93 9.58 2.62 4.54 8.41 | 2.34 4.37 7.97 4.13 7.53 7.49 | 3.16 6.60 6.64 4.36 9.07 6.66 | 3.26 6.61 6.82 4.40 9.13 6.67 | 3.34 6.86 6.71 4.47 9.41 6.62 | 3.47 7.34 6.51 4.68 10.13 6.54 |
-|  | −0.23 1.88 6.11 3.62 8.57 5.86 | 3.06 9.52 4.63 5.27 14.10 6.05 | 3.49 9.21 5.33 6.04 15.19 6.74 | 3.50 9.23 5.34 6.08 15.30 6.76 | 3.57 9.44 5.33 6.02 15.36 6.68 | 3.90 10.34 5.41 6.11 15.60 6.75 |
-| Rawoutput Bassoon WFoutput reissuL Rawoutput Piano WFoutput Rawoutput Trumpet WFoutput | 3.05 5.48 7.82 4.38 7.55 7.94 | 3.47 6.51 7.32 4.40 9.38 6.53 | 3.62 7.00 7.07 4.36 9.71 6.30 | 3.68 7.14 7.04 4.42 9.75 6.36 | 3.72 7.31 6.96 4.34 9.75 6.26 | 3.39 7.08 6.60 3.92 9.37 5.85 |
-|  | 1.57 3.30 8.08 3.12 6.07 7.14 | 1.69 4.06 6.90 3.33 6.60 6.95 | 1.87 4.21 7.08 3.23 6.44 6.94 | 1.94 4.31 7.06 3.32 6.64 6.89 | 1.93 4.38 6.92 3.27 6.69 6.75 | 1.97 4.65 6.61 2.99 6.64 6.29 |
-|  | 5.01 9.37 7.47 6.00 10.18 8.49 | 6.28 11.26 8.25 7.14 12.86 8.71 | 6.61 11.67 8.51 7.38 13.55 8.77 | 6.56 11.54 8.52 7.23 13.43 8.62 | 6.55 11.57 8.49 7.22 13.49 8.58 | 6.38 11.49 8.27 7.23 13.54 8.57 |
-
-### Table 4
-| Instrument | MFCCkmeans[17] SDR SIR SAR | MelNMF[17] SDR SIR SAR | Shifted-NMF[18] SDR SIR SAR | DNNwithWF SDR SIR SAR |
-| --- | --- | --- | --- | --- |
-| Horn smharB Piano Violin Average | 3.87 5.76 9.41 3.30 4.42 10.76 −8.35 −7.89 10.21 | 4.17 5.83 10.17 −0.10 0.21 14.39 9.69 19.79 10.19 | 2.95 3.34 15.20 3.78 5.59 9.50 7.66 10.96 10.74 | 6.80 11.68 8.79 4.68 10.13 6.54 6.11 15.60 6.75 |
-|  | −0.39 0.76 10.13 | 4.59 8.61 11.58 | 4.80 6.63 11.81 | 5.86 12.47 7.36 |
-| Bassoon reissuL Piano Trumpet Average | 1.85 11.67 2.61 4.66 6.28 10.64 −1.73 −1.29 12.18 | 0.15 0.75 11.72 4.56 8.00 7.83 8.46 18.12 9.05 | −0.83 −0.60 15.43 2.54 5.14 7.16 6.57 7.39 14.95 | 3.92 9.37 5.85 2.99 6.64 6.29 7.23 13.54 8.57 |
-|  | 1.59 5.55 8.48 | 4.39 8.96 9.53 | 2.76 3.98 12.51 | 4.71 9.85 6.90 |
-
-### Table 5
-|  |  |  |  |  | dedda r |  |  | dedda r |  |  | dedda r |  |  | gninut e |  | Piano Horn Violin |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-|  |  |  |  | dr | eyal |  | ht | eyal |  | ht | eyal |  |  | nif trat |  |  |
-|  |  |  |  |  | 3 |  |  | 4 |  |  | 5 |  |  | S |  |  |
-|  |  | d |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  | edda |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | d | reyal |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-
-
-## Mathematical Formulas
-
-### Formula 1
-```latex
-i=1 vi(n)
-```
-
-### Formula 2
-```latex
-\frac{8}{15}
-```
-
-### Formula 3
-```latex
-= s(n) + M X i
-```
-
-### Formula 4
-```latex
-=1 vi(n)
-```
-
-### Formula 5
-```latex
-2135 978-1-4673-6997-\frac{8}{15}/$31.00 2015 IEEE ICASSP 2015
-```
-
-### Formula 6
-```latex
-k = 1
-```
-
-### Formula 7
-```latex
-k=1
-```
-
-### Formula 8
-```latex
-p=1
-```
-
-### Formula 9
-```latex
-b= Variations) Bassoon 18 1
-```
-
-### Formula 10
-```latex
-i = 1
-```
-
-### Formula 11
-```latex
-i=1
-```
-
-### Formula 12
-```latex
-> 0 in order to make it independent of different amplitude levels of the mixture x(n) where
-```
-
-### Formula 13
-```latex
-1 = max (Wkxk + bk
-```
-
-### Formula 14
-```latex
-i o with i = 1
-```
-
-### Formula 15
-```latex
-= 1
-```
-
-### Formula 16
-```latex
-M X i=1
-```
-
-### Formula 17
-```latex
-Mixture x(n) ..
-```
-
-### Formula 18
-```latex
-,˜s(P )o and n ˜v(1) i ,
-```
-
-### Formula 19
-```latex
-, ˜v(P ) i o with i = 1,
-```
-
-### Formula 20
-```latex
-, M where ˜s(p)\inC(2C+1)Land ˜v(p) i \inC(2C+1)L, i.e., they also contain the 2C neighboring frames
-```
-
-### Formula 21
-```latex
-These are now combined to form the DNN input/targets, i.e., x(p)= 1 \gamma(p) \alpha(p)˜s(p) + M X i=1 \alpha(p) i ˜v(p) i , (3a) 2136
-```
-
-### Formula 22
-```latex
-i=1
-```
-
-### Formula 23
-```latex
-S = 0    0 I 0    0
-```
-
-### Formula 24
-```latex
-p=1 s(p)
-```
-
-### Formula 25
-```latex
-k = 1 or the output of the (k
-```
-
-### Formula 26
-```latex
-p=1
-```
-
-### Formula 27
-```latex
-k = CsxC
-```
-
-### Formula 28
-```latex
-k= s
-```
-
-### Formula 29
-```latex
-x = P X p
-```
-
-### Formula 30
-```latex
-s =1 P PP p
-```
-
-### Formula 31
-```latex
-k = 1 P PP p
-```
-
-### Formula 32
-```latex
-L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 33
-```latex
-L = 3591 elements and corresponds to 224 milliseconds of the mixture signal
-```
-
-### Formula 34
-```latex
-P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 35
-```latex
-> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in
-```
-
-### Formula 36
-```latex
-PM i=1
-```
-
-### Formula 37
-```latex
-= arg min Wk
-```
-
-### Formula 38
-```latex
-bk P X p=1 s(p)
-```
-
-### Formula 39
-```latex
-k denotes either the pth DNN input for k = 1 or the output of the (k
-```
-
-### Formula 40
-```latex
-form and the solution is given by Winit k = CsxC
-```
-
-### Formula 41
-```latex
-binit k= s
-```
-
-### Formula 42
-```latex
-with Csx = P X p
-```
-
-### Formula 43
-```latex
-=1  s(p)
-```
-
-### Formula 44
-```latex
-Cxx = P X p
-```
-
-### Formula 45
-```latex
-=1  x(p) k
-```
-
-### Formula 46
-```latex
-and s =1 P PP p
-```
-
-### Formula 47
-```latex
-=1s(p)
-```
-
-### Formula 48
-```latex
-xk = 1 P PP p
-```
-
-### Formula 49
-```latex
-=1x(p) k
-```
-
-### Formula 50
-```latex
-we have L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 51
-```latex
-= 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN
-```
-
-### Formula 52
-```latex
-we use P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 53
-```latex
-3000 = 6000 L-BFGS iterations
-```
-
-### Formula 54
-```latex
-s(p)=\alpha(p) \gamma(p) S ˜s(p) , (3b) where \gamma(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in \alpha(p)˜s(p) + PM i=1\alpha(p) i ˜v(p) i and S \inRL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0
-```
-
-### Formula 55
-```latex
-The scalars \alpha(p), \alpha(p) 1,
-```
-
-### Formula 56
-```latex
-The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k
-```
-
-### Formula 57
-```latex
-., {Wk, bk}
-```
-
-### Formula 58
-```latex
-J = (PP p
-```
-
-### Formula 59
-```latex
-p=1
-```
-
-### Formula 60
-```latex
-J = 0
-```
-
-### Formula 61
-```latex
-2 the evolution of the normalized DNN training error J = (PP p
-```
-
-### Formula 62
-```latex
-=1
-```
-
-### Formula 63
-```latex
-PP p=1
-```
-
-### Formula 64
-```latex
-we have an initial error of J = 0
-```
-
-### Formula 65
-```latex
-we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1
-```
-
-### Formula 66
-```latex
-= 0
-```
-
-### Formula 67
-```latex
-2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec
-```
-
-### Formula 68
-```latex
-REFERENCES [1] P
-```
-
-### Formula 69
-```latex
-[2] G
-```
-
-### Formula 70
-```latex
-[3] Z
-```
-
-### Formula 71
-```latex
-[4] J.-L
-```
-
-### Formula 72
-```latex
-[5] D
-```
-
-### Formula 73
-```latex
-[6] D
-```
-
-### Formula 74
-```latex
-[7] A
-```
-
-### Formula 75
-```latex
-[8] C
-```
-
-### Formula 76
-```latex
-[9] G
-```
-
-### Formula 77
-```latex
-[10] E
-```
-
-### Formula 78
-```latex
-[11] P.-S
-```
-
-### Formula 79
-```latex
-[12] P.-S
-```
-
-### Formula 80
-```latex
-[13] X
-```
-
-### Formula 81
-```latex
-[14] M
-```
-
-### Formula 82
-```latex
-[15] B
-```
-
-### Formula 83
-```latex
-[16] P
-```
-
-### Formula 84
-```latex
-[17] M
-```
-
-### Formula 85
-```latex
-[18] R
-```
-
-### Formula 86
-```latex
-[19] P
-```
-
-### Formula 87
-```latex
-[20] P
-```
-
-### Formula 88
-```latex
-[21] M
-```
-
-### Formula 89
-```latex
-[22] J
-```
-
-### Formula 90
-```latex
-[23] E
-```
-
-### Formula 91
-```latex
-[24] P
-```
-
-### Formula 92
-```latex
-[25] F
-```
-
-### Formula 93
-```latex
-[26] B
-```
-
-### Formula 94
-```latex
-[27] B
-```
-
-### Formula 95
-```latex
-[28] E
-```
-
-### Formula 96
-```latex
-[29] M
-```
-
-
-## Forms and Fields
-
-### Form 1
-
-### Form 2
-
-### Form 3
-
-### Form 4
-
-### Form 5
-
-
-
-
-
-### Analysis Techniques
-
-# test_document
-*Converted from PDF using PPARSER*
-
-## Table of Contents
-- [Content](#content)
-- [Images](#images)
-- [Tables](#tables)
-- [Formulas](#formulas)
-- [Forms](#forms)
-
-## Content
-See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper  April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS 138 READS 4,160 3 authors: Stefan Uhlich University of Stuttgart 67PUBLICATIONS1,229CITATIONS SEE PROFILE Franck Giron Sony Europe B.V., Zwg. Deutschland 8PUBLICATIONS380CITATIONS SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175PUBLICATIONS2,294CITATIONS SEE PROFILE All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file.
-DEEP NEURAL NETWORK BASED INSTRUMENT EXTRACTION FROM MUSIC Stefan Uhlich1, Franck Giron1and Yuki Mitsufuji2 1 Sony European Technology Center (EuTEC), Stuttgart, Germany 2 Sony Corporation, Audio Technology Development Department, Tokyo, Japan ABSTRACT This paper deals with the extraction of an instrument from music by using a deep neural network. As prior information, we only as- sume to know the instrument types that are present in the mixture and, using this information, we generate the training data from a database with solo instrument performances. The neural network is built up from rectiﬁed linear units where each hidden layer has the same number of nodes as the output layer. This allows a least squares initialization of the layer weights and speeds up the training of the network considerably compared to a traditional random initializa- tion. We give results for two mixtures, each consisting of three in- struments, and evaluate the extraction performance using BSS Eval for a varying number of hidden layers. Index Terms— Deep neural network (DNN), Instrument extrac- tion, Blind source separation (BSS) 1. INTRODUCTION In this paper, we study the extraction of a target instrument s(n) ∈R from an instantaneous, monaural music mixture x(n) ∈R, i.e., of a mixture that can be written as x(n) = s(n) + M X i=1 vi(n), (1) where vi(n) is the time signal of the ith background instrument and the mixture consists thus in a total of M +1 instruments. From x(n) we want to extract an estimate ˆs(n) of the target instrument s(n) and, therefore, we can see instrument extraction as a special case of the general blind source separation (BSS) problem [1, 2]. Various applications require such an estimate ˆs(n) ranging from Karaoke systems which use a separation into a instruments and a vocal track, see [3, 4], to upmixing where one tries to obtain a multi-channel version of the monaural mixture x(n), see [5,6]. We propose a deep neural network (DNN) for the extraction of the target instrument s(n) from x(n) as DNNs have proved to work very well in various applications and have gained a lot of interest in the last years, especially for classiﬁcation tasks in image process- ing [7, 8] and for speech recognition [9]. We use the DNN in the frequency domain to estimate a target instrument from the mixture, i.e., we train the network such that we can think of it as a “denoiser” which converts the “noisy” mixture spectrogram to the “clean” in- strument spectrogram. For the training of the network, we only as- sume to know the instrument types of the target instrument s(n) and of the other background instruments v1(n), . . . , vM(n), for exam- ple that we want to extract a piano from a mixture with a violin and a horn. This is in contrast to other proposed DNN approaches for BSS of music which are supervised in the sense that they assume to have more knowledge about the signals [10–12]. Huang et. al. used in [11, 12] a deep (recurrent) neural network for the separa- tion of two sources where the neural network is extended by a ﬁnal softmask layer to extract the source estimates and it is trained using a discriminative cost function that also tries to decrease the interfer- ence by other sources. Whereas they only know the type of the target instrument (in their case: singing voice) in [12], they assume that the background is one of 110 known karaoke songs. In contrast, we only know the instrument types that appear in the mixture and, hence, we have to use a large instrument database with solo performances from various musicians and instruments. From this database, we generate the training data that allows us to generalize to new mixtures and this instrument database with the training data generation is thus a integral part of our DNN architecture. A second contribution of the paper is the efﬁcient training of the DNN: We propose a network architecture where each hidden rectiﬁed linear unit (ReLU) layer has the same number of nodes as the output layer. This allows a least squares initialization of the network weights of each layer and, using it as starting point for the limited-memory BFGS (L-BFGS) optimizer, yields a quicker convergence to good network weights. Additionally, we noticed that this initialization often results in ﬁnal network weights which have a smaller training error than if we start the training from randomly initialized weights as we ﬁnd better local minima. The remainder of this paper is organized as follows: In Sec. 2 we describe in detail the DNN based instrument extraction where in particular Sec. 2.1 explains the network structure, Sec. 2.2 shows the generation of the training data and Sec. 2.3 details the layer-wise training procedure. In Sec. 3, we give results for two music mixtures, each consisting of three instruments, before we conclude this paper in Sec. 4 where we summarize our work and give an outlook of future steps. The following notation is used throughout this paper: x denotes a column vector and X a matrix where in particular I is the identity matrix. The matrix transpose and Euclidean norm are denoted by (.)Tand ∥.∥, respectively. Furthermore, max (x, y) is the element- wise maximum operation between x and y, and |x| returns a vector with the element-wise magnitude values of x. 2. DNN BASED INSTRUMENT EXTRACTION 2.1. General Network Structure We will explain now the proposed DNN approach for extracting the target instrument s(n) from the mixture x(n), which is also depicted in Fig. 1. The extraction is done in the frequency domain and it consists of the following three steps: (a) Feature vector generation: We use a short-time Fourier trans- form (STFT) with (possibly overlapping) rectangular windows to transform the mixture signal x(n) into the frequency domain. From this frequency representation, we build a feature vector1 x ∈R(2C+1)Lby stacking the magnitude values of the current frame and the C preceding/succeeding frames where L gives the number of magnitude values per frame. The motivation for using also the 2C neighboring frames is to provide the DNN with tem- poral context that allows it to better extract the target instrument. Please note that these context frames are chosen such that they are 1For convenience, we use in the following a simpliﬁed notation and drop the frame index for x, xk, s, ˆx and γ. 2135 978-1-4673-6997-8/15/$31.00 2015 IEEE ICASSP 2015
-Mixture x(n) ... STFT ... Magnitude STFT frames of x(n) DNN input x ∈R(2C+1)L normalized by γ W1, b1 W2, b2    WK, bK DNN with K ReLU layers DNN output ˆs ∈RL rescaled with γ ... Magnitude STFT frames of ˆs(n) ISTFT ... Recovered instrument ˆs(n) Fig. 1: Instrument extraction using a deep neural network non-overlapping2. Finally, the input vector x is normalized by a scalar γ > 0 in order to make it independent of different amplitude levels of the mixture x(n) where γ is the average Euclidean norm of the 2C + 1 magnitude frames in x. (b) DNN instrument extraction: In a second step, the normalized STFT amplitude vector x is fed to a DNN, which consists of K layers with rectiﬁed linear units (ReLU), i.e., we have xk+1 = max (Wkxk + bk, 0) , k = 1, . . . , K (2) where xk denotes the input to the kth layer and in particular x1 is the DNN input x and xK+1 the DNN output ˆs. Each ReLU layer has L nodes and the network weights {Wk, bk}k=1,...,K are trained such that the DNN outputs an estimate ˆs of the magnitude frame s ∈RL of the target instrument from the mixture vector x. We can thus think of the DNN performing a denoising of the “noisy” mixture input. DNNs with ReLU activation functions have shown very good results, see for example [13, 14], and, as each layer has L hidden units, this activation function will allow us to use a layer-wise least squares initialization as will be shown in Sec. 2.3. (c) Reconstruction of the instrument: Using the phase of the original mixture STFT and multiplying each DNN output ˆs with the energy normalization γ that was applied to the corresponding input vector, we obtain an estimate of the STFT of the target instrument s(n), which we convert back into the time domain using an inverse STFT [15]. Note that the DNN outputs ˆs, i.e., the magnitude frames of the target instrument, will be overlapping as shown in Fig. 1 if the STFT in the ﬁrst step (a) was also using overlapping windows. Please refer to [15] for the ISTFT in this case. 2.2. Training Data Generation In order to train the weights {W1, b1}, . . . , {WK, bK} of the DNN, we need a training set {x(p), s(p)}p=1,...,P of P input/target pairs where x(p)∈R(2C+1)Lis a magnitude vector of the mixture with C preceding/succeeding frames and s(p)∈RLthe corre- sponding magnitude vector of the target instrument that we want to extract. In general, there are several possibilities to generate the required material for the DNN training, which differ in the prior knowledge that we have3: For the target instrument s(n), we either only know the instrument type (e.g., piano) or we have recordings from it. For the background instruments vi(n), we either have no knowledge, we know the instrument types that occur in the mixture or we even have 2E.g., if the STFT uses a overlap of 50%, then we only take every second frame to build the feature vector x. 3Beside the discussed cases, there is also the possibility that we have knowledge about the melody of the target instrument, see for example [16]. Instrument Number of ﬁles Material length (b= Variations) Bassoon 18 1.44 hours Cello 6 1.88 hours Clarinet 14 1.15 hours Horn 14 0.82 hours Piano 89 6.12 hours Saxophone 19 1.16 hours Trumpet 16 0.38 hours Viola 13 1.61 hours Violin 12 5.60 hours Table 1: Instrument database recordings of the particular instruments that occur in the mixture. The easiest case is when we have recordings of the instrument that we want to extract and of those that occur as background in the mix- ture. The most difﬁcult case is when we only know the type of the instrument that we want to extract and do not have any knowledge about the background instruments that will appear in the mixture. In this paper, we assume that we know the instrument types of the tar- get and background, e.g., we know that we want to extract a piano from a mixture with a horn and a violin. Using this prior knowl- edge is reasonable since for many songs, we either have metadata which provides information about the instruments that occur or, in case this information is missing, could be provided by the user. As we only know the instrument types that appear in the mixture, we built a musical instrument database, see Table 1 for the details. The music pieces are stored in the free lossless audio codec (FLAC) for- mat with a sampling rate of 48kHz and contain solo performances of the instruments. For each instrument type we have several ﬁles stemming from different musicians with different instruments play- ing classical masterpieces. These variations are important as we only know the instrument types and, hence, the DNN should generalize well to new instruments of the same type. For the DNN training, we ﬁrst load from the instrument database all audio ﬁles of the instruments that occur in the mixture and resam- ple them to a lower DNN system sampling rate, where the sampling rate is chosen such that the computational complexity of the total DNN system is reduced. In a second step, we convert all signals into the frequency domain using a STFT and randomly sample from the target and background instruments P complex-valued STFT vectors n ˜s(1), . . . ,˜s(P )o and n ˜v(1) i , . . . , ˜v(P ) i o with i = 1, . . . , M where ˜s(p)∈C(2C+1)Land ˜v(p) i ∈C(2C+1)L, i.e., they also contain the 2C neighboring frames. These are now combined to form the DNN input/targets, i.e., x(p)= 1 γ(p) α(p)˜s(p) + M X i=1 α(p) i ˜v(p) i , (3a) 2136
-s(p)=α(p) γ(p) S ˜s(p) , (3b) where γ(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in α(p)˜s(p) + PM i=1α(p) i ˜v(p) i and S ∈RL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0 . The scalars α(p), α(p) 1, . . . , α(p) Mdenote the random amplitudes of each instru- ment which stem from a uniform distribution with support [0.01, 1]. The normalization γ(p)is used to yield a DNN input that is inde- pendent of different amplitude levels of the mixture. Please note, however, that each instrument inside the mixture has a different amplitude α(p), α(p) 1, . . . , α(p) M, i.e., the DNN learns to extract the target instrument even if it has a varying amplitude compared to the background instruments. 2.3. DNN Training Using the dataset that we generated as outlined above, we can learn the network weights such that the sum-of-squared errors (SSE) be- tween the P targets s(p)and the DNN outputs ˆs(p)is minimized4. Due to the special network structure and the use of ReLU (cf. Sec. 2.1), we can perform a layer-wise training of the DNN. Each time a new layer is added, we ﬁrst initialize the weights using least squares estimates of Wk and bk by neglecting the nonlinear rectiﬁer function. As the target vectors s(p)are non-negative, we know that the SSE after adding the ReLU activation function can not increase and, hence, using the least-squares solution as initialization results in a good starting point for the L-BFGS solver that we then use. In the following, we will now describe in more details the two steps that we perform if a new layer is added: (a) Weight initialization: For the kth layer, we solve the optimization problem {Winit k, binit k} = arg min Wk,bk P X p=1 s(p) −  Wkx(p) k + bk  2 (4) where x(p) k denotes either the pth DNN input for k = 1 or the output of the (k −1)th layer if k > 1. Using (4), we choose the initial weights of the network such that they are the optimal linear least squares reconstruction of the targets {s(p)}p=1,...,P from the fea- tures {x(p) k}p=1,...,P . As we know that all elements of the target vector s(p)are non-negative, it is obvious that the total error can not increase by adding the ReLU activation function and, therefore, this initialization is a good starting point for the iterative training in step (b). The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k. (b) L-BFGS training: Starting from the initialization (a), we use a L-BFGS training with the SSE cost function to update the complete network, i.e., to update {W1, b1}, . . ., {Wk, bk}. 4We also tested the weighted Euclidean distance [19] as it showed good results for speech enhancement. However, we could not see an improvement and therefore use the SSE cost function in the following. These two steps are done K times in order to result in a network with K ReLU layers. Finally, after adding all layers, we do a ﬁne tuning of the complete network, where we again use L-BFGS. Using this procedure, we train the DNN as a denoising network as each layer, when it is added to the network, tries to recover the original targets s(p)from the output of the previous layer. This is similar to stacked denoising autoencoders, see [20, 21]. In our ex- periments, we have noticed that using the least squares initialization is advantageous with respect to the following two aspects if com- pared to a random initialization: First, it reduces the training time for the network considerably as we start the L-BFGS optimizer from a good initial value and, second, we found that we do not have the problem of converging to poor local minima which was sometimes the case for the random initialization. In the next section, we will show the beneﬁt of using the proposed initialization. 3. SEPARATION RESULTS In the following, we will now give results for the proposed DNN ap- proach. We consider two monaural music mixtures from the TRIOS dataset [22], each composed of three instruments: the “Brahms” trio consisting of a horn, a piano and a violin and the “Lussier” trio with a bassoon, a piano and a trumpet. We use the following settings for our experiments: The DNN system sampling rate (cf. Sec. 2.2) was chosen to be 32kHz which is a compromise between the audio quality of the extracted instru- ment and the DNN training time. For each frame, we have L = 513 magnitude values and we augment the input vector by C = 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN. Hence, one DNN input vector x has a length of (2C + 1)L = 3591 elements and corresponds to 224 milliseconds of the mixture signal. For the training, we use P = 106samples and the gen- erated training material has thus a length of 62.2 hours. During the layerwise training, we use 600 L-BFGS iterations for each new layer and the ﬁnal ﬁne tuning consists of 3000 additional L-BFGS iterations for the complete network such that in total we execute 5  600 + 3000 = 6000 L-BFGS iterations. Table 2 shows the BSS Eval values [23], i.e., the signal-to- distortion ratio (SDR), signal-to-interference ratio (SIR) and signal- to-artifact ratio (SAR) values after the addition of each ReLU layer. Besides the raw DNN outputs, we also give the BSS Eval values if we use a Wiener ﬁlter to combine the DNN outputs of the three instruments. This additional post-processing step allows an en- hancement of the source separation results since, from the raw DNN outputs, it computes for each instrument a softmask and applies it to the original mixture spectrogram. Looking at the results in Table 2, we can see that there is a noticeable improvement when adding the ﬁrst three layers but the difference becomes smaller for additional layers. For “Brahms”, the best results are obtained after adding all ﬁve layers and performing the ﬁnal ﬁne tuning. This is different for “Lussier”: For the trumpet, we can see that the network is starting to overﬁt to the training set when adding more than three layers as the SDR/SIR values start to decrease. The problem is the limited amount of material for the trumpet (22.5 minutes of solo performances, see Table 1), which is too small. Interestingly, also the DNNs for the other two instruments start to overﬁt which is probably also due to the trumpet in the mixture. From the results we can conclude that having sufﬁcient material for each instrument is vital if only the instrument type is known since only this ensures a good source separation quality and avoids overﬁtting. Table 3 shows for comparison the BSS Eval results for three unsupervised NMF based source separation approaches: • “MFCC kmeans [17]”: This approach uses a Mel ﬁlter bank of size 30 which is applied to the frequency basis vectors of the NMF decomposition in order to compute MFCCs. These are 2137
-Instrument Output After 1st layer After 2nd layer After 3rd layer After 4th layer After 5th layer After ﬁne tuning SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn Raw output 3.30 4.79 9.93 5.15 8.19 8.73 5.29 8.50 8.69 5.38 8.66 8.69 5.53 9.19 8.47 5.70 9.57 8.44 WF output 4.05 5.63 10.25 6.36 10.20 9.08 6.51 10.81 8.87 6.58 10.99 8.87 6.71 11.44 8.79 6.80 11.68 8.79 Piano Raw output 0.85 1.93 9.58 2.34 4.37 7.97 3.16 6.60 6.64 3.26 6.61 6.82 3.34 6.86 6.71 3.47 7.34 6.51 WF output 2.62 4.54 8.41 4.13 7.53 7.49 4.36 9.07 6.66 4.40 9.13 6.67 4.47 9.41 6.62 4.68 10.13 6.54 Violin Raw output −0.23 1.88 6.11 3.06 9.52 4.63 3.49 9.21 5.33 3.50 9.23 5.34 3.57 9.44 5.33 3.90 10.34 5.41 WF output 3.62 8.57 5.86 5.27 14.10 6.05 6.04 15.19 6.74 6.08 15.30 6.76 6.02 15.36 6.68 6.11 15.60 6.75 Lussier Bassoon Raw output 3.05 5.48 7.82 3.47 6.51 7.32 3.62 7.00 7.07 3.68 7.14 7.04 3.72 7.31 6.96 3.39 7.08 6.60 WF output 4.38 7.55 7.94 4.40 9.38 6.53 4.36 9.71 6.30 4.42 9.75 6.36 4.34 9.75 6.26 3.92 9.37 5.85 Piano Raw output 1.57 3.30 8.08 1.69 4.06 6.90 1.87 4.21 7.08 1.94 4.31 7.06 1.93 4.38 6.92 1.97 4.65 6.61 WF output 3.12 6.07 7.14 3.33 6.60 6.95 3.23 6.44 6.94 3.32 6.64 6.89 3.27 6.69 6.75 2.99 6.64 6.29 Trumpet Raw output 5.01 9.37 7.47 6.28 11.26 8.25 6.61 11.67 8.51 6.56 11.54 8.52 6.55 11.57 8.49 6.38 11.49 8.27 WF output 6.00 10.18 8.49 7.14 12.86 8.71 7.38 13.55 8.77 7.23 13.43 8.62 7.22 13.49 8.58 7.23 13.54 8.57 Table 2: BSS Eval results for DNN instrument extraction (“Brahms” and “Lussier” trio, all values are given in dB) Instrument MFCC kmeans [17] Mel NMF [17] Shifted-NMF [18] DNN with WF SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn 3.87 5.76 9.41 4.17 5.83 10.17 2.95 3.34 15.20 6.80 11.68 8.79 Piano 3.30 4.42 10.76 −0.10 0.21 14.39 3.78 5.59 9.50 4.68 10.13 6.54 Violin −8.35 −7.89 10.21 9.69 19.79 10.19 7.66 10.96 10.74 6.11 15.60 6.75 Average −0.39 0.76 10.13 4.59 8.61 11.58 4.80 6.63 11.81 5.86 12.47 7.36 Lussier Bassoon 1.85 11.67 2.61 0.15 0.75 11.72 −0.83 −0.60 15.43 3.92 9.37 5.85 Piano 4.66 6.28 10.64 4.56 8.00 7.83 2.54 5.14 7.16 2.99 6.64 6.29 Trumpet −1.73 −1.29 12.18 8.46 18.12 9.05 6.57 7.39 14.95 7.23 13.54 8.57 Average 1.59 5.55 8.48 4.39 8.96 9.53 2.76 3.98 12.51 4.71 9.85 6.90 Table 3: Comparison of BSS Eval results (all values are given in dB) then clustered via kmeans. For the Mel ﬁlter bank, we use the implementation [24] of [25]. • “Mel NMF [17]”: This approach also applies a Mel ﬁlter bank of size 30 to the original frequency basis vectors and uses a sec- ond NMF to perform the clustering. • “Shifted-NMF [18]”: For this approach, we use a constant Q transform matrix with minimal frequency 55 Hz and 24 fre- quency bins per octave. The shifted-NMF decomposition is al- lowed to use a maximum of 24 shifts. The constant Q transform source code was kindly provided by D. FitzGerald and we use the Tensor toolbox [26,27] for the shifted-NMF implementation. The best SDR values in Table 3 are emphasized in bold face and we can observe that, although our DNN approach not always gives the best individual SDR per instrument, it has the best average SDR for both mixtures since it is capable of extracting three sources with similar quality. This is not the case for the NMF approaches which have one instrument with a low SIR value, i.e., one instrument that is not well separated from the others.5 In order to see the beneﬁt of the least squares initialization from Sec. 2.3 we show in Fig. 2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec. 2.2. The denominator of J gives the SSE of a baseline system where the DNN is perform- ing an identity transform. From Fig. 2 we can see that the error is signiﬁcantly decreased whenever a new layer is added as the error J exhibits downward “jumps”. These “jumps” are due to the least squares initialization of the network weights. For example, consider the training error in Fig. 2 of the network that extracts the piano: When the ﬁrst layer is added, we have an initial error of J = 0.23, which means that, using the least squares initialization from Sec. 2.3, we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1 = 0. Would we have used the 5Please note that the considered NMF approaches are only assuming to know the number of sources, i.e., they use less prior knowledge than our DNN approach. We also tried the supervised NMF approach from [28] where the frequency basis vectors are pre-trained on our instrument database. How- ever, this supervised NMF approach resulted in signiﬁcant worse SDR values as the learned frequency bases for the instruments are correlated which intro- duces interference. 600 1200 1800 2400 3000 6000 0.08 0.1 0.12 0.14 0.16 0.18 0.2 0.22 Number of L−BFGS iterations Normalized training error J 2nd layer added 3rd layer added 4th layer added 5th layer added Start fine tuning Piano Horn Violin Fig. 2: Evolution of training error for “Brahms” baseline initialization, then a simulation showed that it would have taken us 980 additional L-BFGS iterations to reach the error value of the least squares initialization. These L-BFGS iterations can be saved and, therefore, we converge much faster to a network with a good instrument extraction performance. 4. CONCLUSIONS AND FUTURE WORK In this paper, we used a deep neural network for the extraction of an instrument from music. Using only the knowledge of the instrument types, we generated the training data from a database with solo in- strument performances and the network is trained layer-wise with a least-squares initialization of the weights. During our experiments, we noticed that the material length and quality of the solo performances is important as only sufﬁcient ma- terial allows the neural network to generalize to new, i.e., before unseen, instruments. We therefore plan to incorporate the “RWC Music Instrument Sounds” database [29] as it contains high quality samples from many instruments. Furthermore, our data generation process in Sec. 2.2 currently does not exploit music theory when generating the mixtures and we think that, taking such knowledge into account, should generate training data that is better suited for the instrument extraction task. 2138
-5. REFERENCES [1] P. Comon and C. Jutten, Eds., Handbook of Blind Source Sep- aration: Independent Component Analysis and Applications, Academic Press, 2010. [2] G. R. Naik and W. Wang, Eds., Blind Source Separation: Advances in Theory, Algorithms and Applications, Springer, 2014. [3] Z. Raﬁi and B. Pardo, “Repeating pattern extraction technique (REPET): A simple method for music/voice separation,” IEEE Transactions on Audio, Speech, and Language Processing, vol. 21, no. 1, pp. 73–84, 2013. [4] J.-L. Durrieu, B. David, and G. Richard, “A musically moti- vated mid-level representation for pitch estimation and musical audio source separation,” IEEE Journal on Selected Topics on Signal Processing, vol. 5, pp. 1180–1191, 2011. [5] D. FitzGerald, “Upmixing from mono - a source separation ap- proach,” Proc. 17th International Conference on Digital Signal Processing, 2011. [6] D. FitzGerald, “The good vibrations problem,” 134th AES Convention, e-brief, 2013. [7] A. Krizhevsky, I. Sutskever, and G. E. Hinton, “Imagenet clas- siﬁcation with deep convolutional neural networks,” in Ad- vances in neural information processing systems, 2012, pp. 1097–1105. [8] C. Farabet, C. Couprie, L. Najman, and Y. LeCun, “Learning hierarchical features for scene labeling,” IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 35, no. 8, pp. 1915–1929, 2013. [9] G. Hinton, L. Deng, D. Yu, G. E. Dahl, A.-R. Mohamed, N. Jaitly, A. Senior, V. Vanhoucke, P. Nguyen, T. N. Sainath, et al., “Deep neural networks for acoustic modeling in speech recognition: The shared views of four research groups,” IEEE Signal Processing Magazine, vol. 29, no. 6, pp. 82–97, 2012. [10] E. M. Grais, M. U. Sen, and H. Erdogan, “Deep neu- ral networks for single channel source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Process- ing (ICASSP), pp. 3734–3738, 2014. [11] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Deep learning for monaural speech sepa- ration,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 1562–1566, 2014. [12] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Singing-voice separation from monaural recordings using deep recurrent neural networks,” Interna- tional Society for Music Information Retrieval Conference (ISMIR), 2014. [13] X. Glorot, A. Bordes, and Y. Bengio, “Deep sparse rectiﬁer networks,” Proceedings of the 14th International Conference on Artiﬁcial Intelligence and Statistics, vol. 15, pp. 315–323, 2011. [14] M. D. Zeiler, M. Ranzato, R. Monga, M. Mao, K. Yang, Q. V. Le, P. Nguyen, A. Senior, V. Vanhoucke, J. Dean, et al., “On rectiﬁed linear units for speech processing,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 3517–3521, 2013. [15] B. Yang, “A study of inverse short-time Fourier transform,” Proc. IEEE Conference on Acoustics, Speech, and Signal Pro- cessing (ICASSP), pp. 3541–3544, 2008. [16] P. Smaragdis and G. J. Mysore, “Separation by “humming”: User-guided sound extraction from monophonic mixtures,” IEEE Workshop on Applications of Signal Processing to Au- dio and Acoustics, pp. 69–72, 2009. [17] M. Spiertz and V. Gnann, “Source-ﬁlter based clustering for monaural blind source separation,” Proc. Int. Conference on Digital Audio Effects, 2009. [18] R. Jaiswal, D. FitzGerald, D. Barry, E. Coyle, and S. Rickard, “Clustering NMF basis functions using shifted NMF for monaural sound source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 245– 248, 2011. [19] P. C. Loizou, “Speech enhancement based on perceptually mo- tivated Bayesian estimators of the magnitude spectrum,” IEEE Transactions on Speech and Audio Processing, vol. 13, no. 5, pp. 857–869, 2005. [20] P. Vincent, H. Larochelle, Y. Bengio, and P.-A. Manzagol, “Ex- tracting and composing robust features with denoising autoen- coders,” Proceedings of the International Conference on Ma- chine Learning, pp. 1096–1103, 2008. [21] M. Chen, Z. Xu, K. Weinberger, and F. Sha, “Marginalized denoising autoencoders for domain adaptation,” Proceedings of the International Conference on Machine Learning, 2012. [22] J. Fritsch, “High quality musical audio source separation,” Master’s Thesis, UPMC / IRCAM / Telecom ParisTech, 2012. [23] E. Vincent, R. Gribonval, and C. Fevotte, “Performance mea- surement in blind audio source separation,” IEEE Transactions on Audio, Speech and Language Processing, vol. 14, no. 4, pp. 1462–1469, 2006. [24] P. Brady, “Matlab Mel ﬁlter implementation,” http://www.mathworks.com/matlabcentral/ fileexchange/23179-melfilter, 2014, [Online]. [25] F. Zheng, G. Zhang, and Z. Song, “Comparison of different implementations of MFCC,” Journal of Computer Science and Technology, vol. 16, no. 6, pp. 582–589, September 2001. [26] B. W. Bader and T. G. Kolda, “MATLAB tensor toolbox version 2.5,” http://www.sandia.gov/˜tgkolda/ TensorToolbox/, January 2012, [Online]. [27] B. W. Bader and T. G. Kolda, “Algorithm 862: MATLAB ten- sor classes for fast algorithm prototyping,” ACM Transactions on Mathematical Software, vol. 32, no. 4, pp. 635–653, De- cember 2006. [28] E. M. Grais and H. Erdogan, “Single channel speech music separation using nonnegative matrix factorization and spectral mask,” Digital Signal Processing (DSP), 2011 17th Interna- tional Conference on IEEE, pp. 1–6, 2011. [29] M. Goto, H. Hashiguchi, T. Nishimura, and R. Oka, “RWC Music Database: Music Genre Database and Musical Instru- ment Sound Database,” Proc. of the International Conference on Music Information Retrieval (ISMIR), pp. 229–230, 2003. 2139 View publication stats
-
-## Images
-
-### Image 1
-**Description:** small rectangular grayscale image (64x64)
-![Image 1](page_1_img_1_0f58f9aa.png)
-**Dimensions:** 64x64
-
-### Image 2
-**Description:** small rectangular color image (64x64)
-![Image 2](page_1_img_2_87e4f64c.png)
-**Dimensions:** 64x64
-
-### Image 3
-**Description:** small rectangular color image (64x64)
-![Image 3](page_1_img_3_1be6f0da.png)
-**Dimensions:** 64x64
-
-
-## Tables
-
-### Table 1
-| See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper · April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS READS 138 4,160 3 authors: Stefan Uhlich Franck Giron University of Stuttgart Sony Europe B.V., Zwg. Deutschland 67 PUBLICATIONS 1,229 CITATIONS 8 PUBLICATIONS 380 CITATIONS SEE PROFILE SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175 PUBLICATIONS 2,294 CITATIONS SEE PROFILE |  |
-| --- | --- |
-| All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file. |  |
-
-### Table 2
-| Instrument | Numberoffiles (=bVariations) | Materiallength |
-| --- | --- | --- |
-| Bassoon Cello Clarinet Horn Piano Saxophone Trumpet Viola Violin | 18 6 14 14 89 19 16 13 12 | 1.44hours 1.88hours 1.15hours 0.82hours 6.12hours 1.16hours 0.38hours 1.61hours 5.60hours |
-
-### Table 3
-| Instrument Output | After1stlayer SDR SIR SAR | After2ndlayer SDR SIR SAR | After3rdlayer SDR SIR SAR | After4thlayer SDR SIR SAR | After5thlayer SDR SIR SAR | Afterfinetuning SDR SIR SAR |
-| --- | --- | --- | --- | --- | --- | --- |
-| Rawoutput Horn WFoutput smharB Rawoutput Piano WFoutput Rawoutput Violin WFoutput | 3.30 4.79 9.93 4.05 5.63 10.25 | 5.15 8.19 8.73 6.36 10.20 9.08 | 5.29 8.50 8.69 6.51 10.81 8.87 | 5.38 8.66 8.69 6.58 10.99 8.87 | 5.53 9.19 8.47 6.71 11.44 8.79 | 5.70 9.57 8.44 6.80 11.68 8.79 |
-|  | 0.85 1.93 9.58 2.62 4.54 8.41 | 2.34 4.37 7.97 4.13 7.53 7.49 | 3.16 6.60 6.64 4.36 9.07 6.66 | 3.26 6.61 6.82 4.40 9.13 6.67 | 3.34 6.86 6.71 4.47 9.41 6.62 | 3.47 7.34 6.51 4.68 10.13 6.54 |
-|  | −0.23 1.88 6.11 3.62 8.57 5.86 | 3.06 9.52 4.63 5.27 14.10 6.05 | 3.49 9.21 5.33 6.04 15.19 6.74 | 3.50 9.23 5.34 6.08 15.30 6.76 | 3.57 9.44 5.33 6.02 15.36 6.68 | 3.90 10.34 5.41 6.11 15.60 6.75 |
-| Rawoutput Bassoon WFoutput reissuL Rawoutput Piano WFoutput Rawoutput Trumpet WFoutput | 3.05 5.48 7.82 4.38 7.55 7.94 | 3.47 6.51 7.32 4.40 9.38 6.53 | 3.62 7.00 7.07 4.36 9.71 6.30 | 3.68 7.14 7.04 4.42 9.75 6.36 | 3.72 7.31 6.96 4.34 9.75 6.26 | 3.39 7.08 6.60 3.92 9.37 5.85 |
-|  | 1.57 3.30 8.08 3.12 6.07 7.14 | 1.69 4.06 6.90 3.33 6.60 6.95 | 1.87 4.21 7.08 3.23 6.44 6.94 | 1.94 4.31 7.06 3.32 6.64 6.89 | 1.93 4.38 6.92 3.27 6.69 6.75 | 1.97 4.65 6.61 2.99 6.64 6.29 |
-|  | 5.01 9.37 7.47 6.00 10.18 8.49 | 6.28 11.26 8.25 7.14 12.86 8.71 | 6.61 11.67 8.51 7.38 13.55 8.77 | 6.56 11.54 8.52 7.23 13.43 8.62 | 6.55 11.57 8.49 7.22 13.49 8.58 | 6.38 11.49 8.27 7.23 13.54 8.57 |
-
-### Table 4
-| Instrument | MFCCkmeans[17] SDR SIR SAR | MelNMF[17] SDR SIR SAR | Shifted-NMF[18] SDR SIR SAR | DNNwithWF SDR SIR SAR |
-| --- | --- | --- | --- | --- |
-| Horn smharB Piano Violin Average | 3.87 5.76 9.41 3.30 4.42 10.76 −8.35 −7.89 10.21 | 4.17 5.83 10.17 −0.10 0.21 14.39 9.69 19.79 10.19 | 2.95 3.34 15.20 3.78 5.59 9.50 7.66 10.96 10.74 | 6.80 11.68 8.79 4.68 10.13 6.54 6.11 15.60 6.75 |
-|  | −0.39 0.76 10.13 | 4.59 8.61 11.58 | 4.80 6.63 11.81 | 5.86 12.47 7.36 |
-| Bassoon reissuL Piano Trumpet Average | 1.85 11.67 2.61 4.66 6.28 10.64 −1.73 −1.29 12.18 | 0.15 0.75 11.72 4.56 8.00 7.83 8.46 18.12 9.05 | −0.83 −0.60 15.43 2.54 5.14 7.16 6.57 7.39 14.95 | 3.92 9.37 5.85 2.99 6.64 6.29 7.23 13.54 8.57 |
-|  | 1.59 5.55 8.48 | 4.39 8.96 9.53 | 2.76 3.98 12.51 | 4.71 9.85 6.90 |
-
-### Table 5
-|  |  |  |  |  | dedda r |  |  | dedda r |  |  | dedda r |  |  | gninut e |  | Piano Horn Violin |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-|  |  |  |  | dr | eyal |  | ht | eyal |  | ht | eyal |  |  | nif trat |  |  |
-|  |  |  |  |  | 3 |  |  | 4 |  |  | 5 |  |  | S |  |  |
-|  |  | d |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  | edda |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | d | reyal |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-
-
-## Mathematical Formulas
-
-### Formula 1
-```latex
-i=1 vi(n)
-```
-
-### Formula 2
-```latex
-\frac{8}{15}
-```
-
-### Formula 3
-```latex
-= s(n) + M X i
-```
-
-### Formula 4
-```latex
-=1 vi(n)
-```
-
-### Formula 5
-```latex
-2135 978-1-4673-6997-\frac{8}{15}/$31.00 2015 IEEE ICASSP 2015
-```
-
-### Formula 6
-```latex
-k = 1
-```
-
-### Formula 7
-```latex
-k=1
-```
-
-### Formula 8
-```latex
-p=1
-```
-
-### Formula 9
-```latex
-b= Variations) Bassoon 18 1
-```
-
-### Formula 10
-```latex
-i = 1
-```
-
-### Formula 11
-```latex
-i=1
-```
-
-### Formula 12
-```latex
-> 0 in order to make it independent of different amplitude levels of the mixture x(n) where
-```
-
-### Formula 13
-```latex
-1 = max (Wkxk + bk
-```
-
-### Formula 14
-```latex
-i o with i = 1
-```
-
-### Formula 15
-```latex
-= 1
-```
-
-### Formula 16
-```latex
-M X i=1
-```
-
-### Formula 17
-```latex
-Mixture x(n) ..
-```
-
-### Formula 18
-```latex
-,˜s(P )o and n ˜v(1) i ,
-```
-
-### Formula 19
-```latex
-, ˜v(P ) i o with i = 1,
-```
-
-### Formula 20
-```latex
-, M where ˜s(p)\inC(2C+1)Land ˜v(p) i \inC(2C+1)L, i.e., they also contain the 2C neighboring frames
-```
-
-### Formula 21
-```latex
-These are now combined to form the DNN input/targets, i.e., x(p)= 1 \gamma(p) \alpha(p)˜s(p) + M X i=1 \alpha(p) i ˜v(p) i , (3a) 2136
-```
-
-### Formula 22
-```latex
-i=1
-```
-
-### Formula 23
-```latex
-S = 0    0 I 0    0
-```
-
-### Formula 24
-```latex
-p=1 s(p)
-```
-
-### Formula 25
-```latex
-k = 1 or the output of the (k
-```
-
-### Formula 26
-```latex
-p=1
-```
-
-### Formula 27
-```latex
-k = CsxC
-```
-
-### Formula 28
-```latex
-k= s
-```
-
-### Formula 29
-```latex
-x = P X p
-```
-
-### Formula 30
-```latex
-s =1 P PP p
-```
-
-### Formula 31
-```latex
-k = 1 P PP p
-```
-
-### Formula 32
-```latex
-L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 33
-```latex
-L = 3591 elements and corresponds to 224 milliseconds of the mixture signal
-```
-
-### Formula 34
-```latex
-P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 35
-```latex
-> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in
-```
-
-### Formula 36
-```latex
-PM i=1
-```
-
-### Formula 37
-```latex
-= arg min Wk
-```
-
-### Formula 38
-```latex
-bk P X p=1 s(p)
-```
-
-### Formula 39
-```latex
-k denotes either the pth DNN input for k = 1 or the output of the (k
-```
-
-### Formula 40
-```latex
-form and the solution is given by Winit k = CsxC
-```
-
-### Formula 41
-```latex
-binit k= s
-```
-
-### Formula 42
-```latex
-with Csx = P X p
-```
-
-### Formula 43
-```latex
-=1  s(p)
-```
-
-### Formula 44
-```latex
-Cxx = P X p
-```
-
-### Formula 45
-```latex
-=1  x(p) k
-```
-
-### Formula 46
-```latex
-and s =1 P PP p
-```
-
-### Formula 47
-```latex
-=1s(p)
-```
-
-### Formula 48
-```latex
-xk = 1 P PP p
-```
-
-### Formula 49
-```latex
-=1x(p) k
-```
-
-### Formula 50
-```latex
-we have L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 51
-```latex
-= 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN
-```
-
-### Formula 52
-```latex
-we use P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 53
-```latex
-3000 = 6000 L-BFGS iterations
-```
-
-### Formula 54
-```latex
-s(p)=\alpha(p) \gamma(p) S ˜s(p) , (3b) where \gamma(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in \alpha(p)˜s(p) + PM i=1\alpha(p) i ˜v(p) i and S \inRL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0
-```
-
-### Formula 55
-```latex
-The scalars \alpha(p), \alpha(p) 1,
-```
-
-### Formula 56
-```latex
-The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k
-```
-
-### Formula 57
-```latex
-., {Wk, bk}
-```
-
-### Formula 58
-```latex
-J = (PP p
-```
-
-### Formula 59
-```latex
-p=1
-```
-
-### Formula 60
-```latex
-J = 0
-```
-
-### Formula 61
-```latex
-2 the evolution of the normalized DNN training error J = (PP p
-```
-
-### Formula 62
-```latex
-=1
-```
-
-### Formula 63
-```latex
-PP p=1
-```
-
-### Formula 64
-```latex
-we have an initial error of J = 0
-```
-
-### Formula 65
-```latex
-we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1
-```
-
-### Formula 66
-```latex
-= 0
-```
-
-### Formula 67
-```latex
-2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec
-```
-
-### Formula 68
-```latex
-REFERENCES [1] P
-```
-
-### Formula 69
-```latex
-[2] G
-```
-
-### Formula 70
-```latex
-[3] Z
-```
-
-### Formula 71
-```latex
-[4] J.-L
-```
-
-### Formula 72
-```latex
-[5] D
-```
-
-### Formula 73
-```latex
-[6] D
-```
-
-### Formula 74
-```latex
-[7] A
-```
-
-### Formula 75
-```latex
-[8] C
-```
-
-### Formula 76
-```latex
-[9] G
-```
-
-### Formula 77
-```latex
-[10] E
-```
-
-### Formula 78
-```latex
-[11] P.-S
-```
-
-### Formula 79
-```latex
-[12] P.-S
-```
-
-### Formula 80
-```latex
-[13] X
-```
-
-### Formula 81
-```latex
-[14] M
-```
-
-### Formula 82
-```latex
-[15] B
-```
-
-### Formula 83
-```latex
-[16] P
-```
-
-### Formula 84
-```latex
-[17] M
-```
-
-### Formula 85
-```latex
-[18] R
-```
-
-### Formula 86
-```latex
-[19] P
-```
-
-### Formula 87
-```latex
-[20] P
-```
-
-### Formula 88
-```latex
-[21] M
-```
-
-### Formula 89
-```latex
-[22] J
-```
-
-### Formula 90
-```latex
-[23] E
-```
-
-### Formula 91
-```latex
-[24] P
-```
-
-### Formula 92
-```latex
-[25] F
-```
-
-### Formula 93
-```latex
-[26] B
-```
-
-### Formula 94
-```latex
-[27] B
-```
-
-### Formula 95
-```latex
-[28] E
-```
-
-### Formula 96
-```latex
-[29] M
-```
-
-
-## Forms and Fields
-
-### Form 1
-
-### Form 2
-
-### Form 3
-
-### Form 4
-
-### Form 5
-
-
-
-
+Provided proper attribution is provided, Google hereby grants permission to reproduce the tables and figures in this paper solely for use in journalistic or scholarly works. 
+
+Attention Is All You Need  
+Ashish Vaswani¹ Google Brain avaswani@google.com  
+Noam Shazeer¹ Google Brain noam@google.com  
+Niki Parmar¹ Google Research nikip@google.com  
+Jakob Uszkoreit¹ Google Research usz@google.com  
+Llion Jones¹ Google Research llion@google.com  
+Aidan N. Gomez¹² University of Toronto aidan@cs.toronto.edu  
+Łukasz Kaiser¹ Google Brain lukaszkaiser@google.com  
+Illia Polosukhin¹³ illia.polosukhin@gmail.com  
+
+**Abstract**  
+The dominant sequence transduction models are based on complex recurrent or convolutional neural networks that include an encoder and a decoder. The best performing models also connect the encoder and decoder through an attention mechanism. We propose a new simple network architecture, the Transformer, based solely on attention mechanisms, dispensing with recurrence and convolutions entirely. Experiments on two machine translation tasks show these models to be superior in quality while being more parallelizable and requiring significantly less time to train. Our model achieves 28.4 BLEU on the WMT 2014 English-to-German translation task, improving over the existing best results, including ensembles, by over 2 BLEU. On the WMT 2014 English-to-French translation task, our model establishes a new single-model state-of-the-art BLEU score of 41.8 after training for 3.5 days on eight GPUs, a small fraction of the training costs of the best models from the literature. We show that the Transformer generalizes well to other tasks by applying it successfully to English constituency parsing both with large and limited training data. 
+
+¹Equal contribution. Listing order is random. Jakob proposed replacing RNNs with self-attention and started the effort to evaluate this idea. Ashish, with Illia, designed and implemented the first Transformer models and has been crucially involved in every aspect of this work. Noam proposed scaled dot-product attention, multi-head attention and the parameter-free position representation and became the other person involved in nearly every detail. Niki designed, implemented, tuned and evaluated countless model variants in our original codebase and tensor2tensor. Llion also experimented with novel model variants, was responsible for our initial codebase, and efficient inference and visualizations. Lukasz and Aidan spent countless long days designing various parts of and implementing tensor2tensor, replacing our earlier codebase, greatly improving results and massively accelerating our research.  
+²Work performed while at Google Brain.  
+³Work performed while at Google Research.  
+
+31st Conference on Neural Information Processing Systems (NIPS 2017), Long Beach, CA, USA. arXiv:1706.03762v7 [cs.CL] 2 Aug 2023
 
 ## Results
 
-# test_document
-*Converted from PDF using PPARSER*
-
-## Table of Contents
-- [Content](#content)
-- [Images](#images)
-- [Tables](#tables)
-- [Formulas](#formulas)
-- [Forms](#forms)
-
-## Content
-See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper  April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS 138 READS 4,160 3 authors: Stefan Uhlich University of Stuttgart 67PUBLICATIONS1,229CITATIONS SEE PROFILE Franck Giron Sony Europe B.V., Zwg. Deutschland 8PUBLICATIONS380CITATIONS SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175PUBLICATIONS2,294CITATIONS SEE PROFILE All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file.
-DEEP NEURAL NETWORK BASED INSTRUMENT EXTRACTION FROM MUSIC Stefan Uhlich1, Franck Giron1and Yuki Mitsufuji2 1 Sony European Technology Center (EuTEC), Stuttgart, Germany 2 Sony Corporation, Audio Technology Development Department, Tokyo, Japan ABSTRACT This paper deals with the extraction of an instrument from music by using a deep neural network. As prior information, we only as- sume to know the instrument types that are present in the mixture and, using this information, we generate the training data from a database with solo instrument performances. The neural network is built up from rectiﬁed linear units where each hidden layer has the same number of nodes as the output layer. This allows a least squares initialization of the layer weights and speeds up the training of the network considerably compared to a traditional random initializa- tion. We give results for two mixtures, each consisting of three in- struments, and evaluate the extraction performance using BSS Eval for a varying number of hidden layers. Index Terms— Deep neural network (DNN), Instrument extrac- tion, Blind source separation (BSS) 1. INTRODUCTION In this paper, we study the extraction of a target instrument s(n) ∈R from an instantaneous, monaural music mixture x(n) ∈R, i.e., of a mixture that can be written as x(n) = s(n) + M X i=1 vi(n), (1) where vi(n) is the time signal of the ith background instrument and the mixture consists thus in a total of M +1 instruments. From x(n) we want to extract an estimate ˆs(n) of the target instrument s(n) and, therefore, we can see instrument extraction as a special case of the general blind source separation (BSS) problem [1, 2]. Various applications require such an estimate ˆs(n) ranging from Karaoke systems which use a separation into a instruments and a vocal track, see [3, 4], to upmixing where one tries to obtain a multi-channel version of the monaural mixture x(n), see [5,6]. We propose a deep neural network (DNN) for the extraction of the target instrument s(n) from x(n) as DNNs have proved to work very well in various applications and have gained a lot of interest in the last years, especially for classiﬁcation tasks in image process- ing [7, 8] and for speech recognition [9]. We use the DNN in the frequency domain to estimate a target instrument from the mixture, i.e., we train the network such that we can think of it as a “denoiser” which converts the “noisy” mixture spectrogram to the “clean” in- strument spectrogram. For the training of the network, we only as- sume to know the instrument types of the target instrument s(n) and of the other background instruments v1(n), . . . , vM(n), for exam- ple that we want to extract a piano from a mixture with a violin and a horn. This is in contrast to other proposed DNN approaches for BSS of music which are supervised in the sense that they assume to have more knowledge about the signals [10–12]. Huang et. al. used in [11, 12] a deep (recurrent) neural network for the separa- tion of two sources where the neural network is extended by a ﬁnal softmask layer to extract the source estimates and it is trained using a discriminative cost function that also tries to decrease the interfer- ence by other sources. Whereas they only know the type of the target instrument (in their case: singing voice) in [12], they assume that the background is one of 110 known karaoke songs. In contrast, we only know the instrument types that appear in the mixture and, hence, we have to use a large instrument database with solo performances from various musicians and instruments. From this database, we generate the training data that allows us to generalize to new mixtures and this instrument database with the training data generation is thus a integral part of our DNN architecture. A second contribution of the paper is the efﬁcient training of the DNN: We propose a network architecture where each hidden rectiﬁed linear unit (ReLU) layer has the same number of nodes as the output layer. This allows a least squares initialization of the network weights of each layer and, using it as starting point for the limited-memory BFGS (L-BFGS) optimizer, yields a quicker convergence to good network weights. Additionally, we noticed that this initialization often results in ﬁnal network weights which have a smaller training error than if we start the training from randomly initialized weights as we ﬁnd better local minima. The remainder of this paper is organized as follows: In Sec. 2 we describe in detail the DNN based instrument extraction where in particular Sec. 2.1 explains the network structure, Sec. 2.2 shows the generation of the training data and Sec. 2.3 details the layer-wise training procedure. In Sec. 3, we give results for two music mixtures, each consisting of three instruments, before we conclude this paper in Sec. 4 where we summarize our work and give an outlook of future steps. The following notation is used throughout this paper: x denotes a column vector and X a matrix where in particular I is the identity matrix. The matrix transpose and Euclidean norm are denoted by (.)Tand ∥.∥, respectively. Furthermore, max (x, y) is the element- wise maximum operation between x and y, and |x| returns a vector with the element-wise magnitude values of x. 2. DNN BASED INSTRUMENT EXTRACTION 2.1. General Network Structure We will explain now the proposed DNN approach for extracting the target instrument s(n) from the mixture x(n), which is also depicted in Fig. 1. The extraction is done in the frequency domain and it consists of the following three steps: (a) Feature vector generation: We use a short-time Fourier trans- form (STFT) with (possibly overlapping) rectangular windows to transform the mixture signal x(n) into the frequency domain. From this frequency representation, we build a feature vector1 x ∈R(2C+1)Lby stacking the magnitude values of the current frame and the C preceding/succeeding frames where L gives the number of magnitude values per frame. The motivation for using also the 2C neighboring frames is to provide the DNN with tem- poral context that allows it to better extract the target instrument. Please note that these context frames are chosen such that they are 1For convenience, we use in the following a simpliﬁed notation and drop the frame index for x, xk, s, ˆx and γ. 2135 978-1-4673-6997-8/15/$31.00 2015 IEEE ICASSP 2015
-Mixture x(n) ... STFT ... Magnitude STFT frames of x(n) DNN input x ∈R(2C+1)L normalized by γ W1, b1 W2, b2    WK, bK DNN with K ReLU layers DNN output ˆs ∈RL rescaled with γ ... Magnitude STFT frames of ˆs(n) ISTFT ... Recovered instrument ˆs(n) Fig. 1: Instrument extraction using a deep neural network non-overlapping2. Finally, the input vector x is normalized by a scalar γ > 0 in order to make it independent of different amplitude levels of the mixture x(n) where γ is the average Euclidean norm of the 2C + 1 magnitude frames in x. (b) DNN instrument extraction: In a second step, the normalized STFT amplitude vector x is fed to a DNN, which consists of K layers with rectiﬁed linear units (ReLU), i.e., we have xk+1 = max (Wkxk + bk, 0) , k = 1, . . . , K (2) where xk denotes the input to the kth layer and in particular x1 is the DNN input x and xK+1 the DNN output ˆs. Each ReLU layer has L nodes and the network weights {Wk, bk}k=1,...,K are trained such that the DNN outputs an estimate ˆs of the magnitude frame s ∈RL of the target instrument from the mixture vector x. We can thus think of the DNN performing a denoising of the “noisy” mixture input. DNNs with ReLU activation functions have shown very good results, see for example [13, 14], and, as each layer has L hidden units, this activation function will allow us to use a layer-wise least squares initialization as will be shown in Sec. 2.3. (c) Reconstruction of the instrument: Using the phase of the original mixture STFT and multiplying each DNN output ˆs with the energy normalization γ that was applied to the corresponding input vector, we obtain an estimate of the STFT of the target instrument s(n), which we convert back into the time domain using an inverse STFT [15]. Note that the DNN outputs ˆs, i.e., the magnitude frames of the target instrument, will be overlapping as shown in Fig. 1 if the STFT in the ﬁrst step (a) was also using overlapping windows. Please refer to [15] for the ISTFT in this case. 2.2. Training Data Generation In order to train the weights {W1, b1}, . . . , {WK, bK} of the DNN, we need a training set {x(p), s(p)}p=1,...,P of P input/target pairs where x(p)∈R(2C+1)Lis a magnitude vector of the mixture with C preceding/succeeding frames and s(p)∈RLthe corre- sponding magnitude vector of the target instrument that we want to extract. In general, there are several possibilities to generate the required material for the DNN training, which differ in the prior knowledge that we have3: For the target instrument s(n), we either only know the instrument type (e.g., piano) or we have recordings from it. For the background instruments vi(n), we either have no knowledge, we know the instrument types that occur in the mixture or we even have 2E.g., if the STFT uses a overlap of 50%, then we only take every second frame to build the feature vector x. 3Beside the discussed cases, there is also the possibility that we have knowledge about the melody of the target instrument, see for example [16]. Instrument Number of ﬁles Material length (b= Variations) Bassoon 18 1.44 hours Cello 6 1.88 hours Clarinet 14 1.15 hours Horn 14 0.82 hours Piano 89 6.12 hours Saxophone 19 1.16 hours Trumpet 16 0.38 hours Viola 13 1.61 hours Violin 12 5.60 hours Table 1: Instrument database recordings of the particular instruments that occur in the mixture. The easiest case is when we have recordings of the instrument that we want to extract and of those that occur as background in the mix- ture. The most difﬁcult case is when we only know the type of the instrument that we want to extract and do not have any knowledge about the background instruments that will appear in the mixture. In this paper, we assume that we know the instrument types of the tar- get and background, e.g., we know that we want to extract a piano from a mixture with a horn and a violin. Using this prior knowl- edge is reasonable since for many songs, we either have metadata which provides information about the instruments that occur or, in case this information is missing, could be provided by the user. As we only know the instrument types that appear in the mixture, we built a musical instrument database, see Table 1 for the details. The music pieces are stored in the free lossless audio codec (FLAC) for- mat with a sampling rate of 48kHz and contain solo performances of the instruments. For each instrument type we have several ﬁles stemming from different musicians with different instruments play- ing classical masterpieces. These variations are important as we only know the instrument types and, hence, the DNN should generalize well to new instruments of the same type. For the DNN training, we ﬁrst load from the instrument database all audio ﬁles of the instruments that occur in the mixture and resam- ple them to a lower DNN system sampling rate, where the sampling rate is chosen such that the computational complexity of the total DNN system is reduced. In a second step, we convert all signals into the frequency domain using a STFT and randomly sample from the target and background instruments P complex-valued STFT vectors n ˜s(1), . . . ,˜s(P )o and n ˜v(1) i , . . . , ˜v(P ) i o with i = 1, . . . , M where ˜s(p)∈C(2C+1)Land ˜v(p) i ∈C(2C+1)L, i.e., they also contain the 2C neighboring frames. These are now combined to form the DNN input/targets, i.e., x(p)= 1 γ(p) α(p)˜s(p) + M X i=1 α(p) i ˜v(p) i , (3a) 2136
-s(p)=α(p) γ(p) S ˜s(p) , (3b) where γ(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in α(p)˜s(p) + PM i=1α(p) i ˜v(p) i and S ∈RL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0 . The scalars α(p), α(p) 1, . . . , α(p) Mdenote the random amplitudes of each instru- ment which stem from a uniform distribution with support [0.01, 1]. The normalization γ(p)is used to yield a DNN input that is inde- pendent of different amplitude levels of the mixture. Please note, however, that each instrument inside the mixture has a different amplitude α(p), α(p) 1, . . . , α(p) M, i.e., the DNN learns to extract the target instrument even if it has a varying amplitude compared to the background instruments. 2.3. DNN Training Using the dataset that we generated as outlined above, we can learn the network weights such that the sum-of-squared errors (SSE) be- tween the P targets s(p)and the DNN outputs ˆs(p)is minimized4. Due to the special network structure and the use of ReLU (cf. Sec. 2.1), we can perform a layer-wise training of the DNN. Each time a new layer is added, we ﬁrst initialize the weights using least squares estimates of Wk and bk by neglecting the nonlinear rectiﬁer function. As the target vectors s(p)are non-negative, we know that the SSE after adding the ReLU activation function can not increase and, hence, using the least-squares solution as initialization results in a good starting point for the L-BFGS solver that we then use. In the following, we will now describe in more details the two steps that we perform if a new layer is added: (a) Weight initialization: For the kth layer, we solve the optimization problem {Winit k, binit k} = arg min Wk,bk P X p=1 s(p) −  Wkx(p) k + bk  2 (4) where x(p) k denotes either the pth DNN input for k = 1 or the output of the (k −1)th layer if k > 1. Using (4), we choose the initial weights of the network such that they are the optimal linear least squares reconstruction of the targets {s(p)}p=1,...,P from the fea- tures {x(p) k}p=1,...,P . As we know that all elements of the target vector s(p)are non-negative, it is obvious that the total error can not increase by adding the ReLU activation function and, therefore, this initialization is a good starting point for the iterative training in step (b). The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k. (b) L-BFGS training: Starting from the initialization (a), we use a L-BFGS training with the SSE cost function to update the complete network, i.e., to update {W1, b1}, . . ., {Wk, bk}. 4We also tested the weighted Euclidean distance [19] as it showed good results for speech enhancement. However, we could not see an improvement and therefore use the SSE cost function in the following. These two steps are done K times in order to result in a network with K ReLU layers. Finally, after adding all layers, we do a ﬁne tuning of the complete network, where we again use L-BFGS. Using this procedure, we train the DNN as a denoising network as each layer, when it is added to the network, tries to recover the original targets s(p)from the output of the previous layer. This is similar to stacked denoising autoencoders, see [20, 21]. In our ex- periments, we have noticed that using the least squares initialization is advantageous with respect to the following two aspects if com- pared to a random initialization: First, it reduces the training time for the network considerably as we start the L-BFGS optimizer from a good initial value and, second, we found that we do not have the problem of converging to poor local minima which was sometimes the case for the random initialization. In the next section, we will show the beneﬁt of using the proposed initialization. 3. SEPARATION RESULTS In the following, we will now give results for the proposed DNN ap- proach. We consider two monaural music mixtures from the TRIOS dataset [22], each composed of three instruments: the “Brahms” trio consisting of a horn, a piano and a violin and the “Lussier” trio with a bassoon, a piano and a trumpet. We use the following settings for our experiments: The DNN system sampling rate (cf. Sec. 2.2) was chosen to be 32kHz which is a compromise between the audio quality of the extracted instru- ment and the DNN training time. For each frame, we have L = 513 magnitude values and we augment the input vector by C = 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN. Hence, one DNN input vector x has a length of (2C + 1)L = 3591 elements and corresponds to 224 milliseconds of the mixture signal. For the training, we use P = 106samples and the gen- erated training material has thus a length of 62.2 hours. During the layerwise training, we use 600 L-BFGS iterations for each new layer and the ﬁnal ﬁne tuning consists of 3000 additional L-BFGS iterations for the complete network such that in total we execute 5  600 + 3000 = 6000 L-BFGS iterations. Table 2 shows the BSS Eval values [23], i.e., the signal-to- distortion ratio (SDR), signal-to-interference ratio (SIR) and signal- to-artifact ratio (SAR) values after the addition of each ReLU layer. Besides the raw DNN outputs, we also give the BSS Eval values if we use a Wiener ﬁlter to combine the DNN outputs of the three instruments. This additional post-processing step allows an en- hancement of the source separation results since, from the raw DNN outputs, it computes for each instrument a softmask and applies it to the original mixture spectrogram. Looking at the results in Table 2, we can see that there is a noticeable improvement when adding the ﬁrst three layers but the difference becomes smaller for additional layers. For “Brahms”, the best results are obtained after adding all ﬁve layers and performing the ﬁnal ﬁne tuning. This is different for “Lussier”: For the trumpet, we can see that the network is starting to overﬁt to the training set when adding more than three layers as the SDR/SIR values start to decrease. The problem is the limited amount of material for the trumpet (22.5 minutes of solo performances, see Table 1), which is too small. Interestingly, also the DNNs for the other two instruments start to overﬁt which is probably also due to the trumpet in the mixture. From the results we can conclude that having sufﬁcient material for each instrument is vital if only the instrument type is known since only this ensures a good source separation quality and avoids overﬁtting. Table 3 shows for comparison the BSS Eval results for three unsupervised NMF based source separation approaches: • “MFCC kmeans [17]”: This approach uses a Mel ﬁlter bank of size 30 which is applied to the frequency basis vectors of the NMF decomposition in order to compute MFCCs. These are 2137
-Instrument Output After 1st layer After 2nd layer After 3rd layer After 4th layer After 5th layer After ﬁne tuning SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn Raw output 3.30 4.79 9.93 5.15 8.19 8.73 5.29 8.50 8.69 5.38 8.66 8.69 5.53 9.19 8.47 5.70 9.57 8.44 WF output 4.05 5.63 10.25 6.36 10.20 9.08 6.51 10.81 8.87 6.58 10.99 8.87 6.71 11.44 8.79 6.80 11.68 8.79 Piano Raw output 0.85 1.93 9.58 2.34 4.37 7.97 3.16 6.60 6.64 3.26 6.61 6.82 3.34 6.86 6.71 3.47 7.34 6.51 WF output 2.62 4.54 8.41 4.13 7.53 7.49 4.36 9.07 6.66 4.40 9.13 6.67 4.47 9.41 6.62 4.68 10.13 6.54 Violin Raw output −0.23 1.88 6.11 3.06 9.52 4.63 3.49 9.21 5.33 3.50 9.23 5.34 3.57 9.44 5.33 3.90 10.34 5.41 WF output 3.62 8.57 5.86 5.27 14.10 6.05 6.04 15.19 6.74 6.08 15.30 6.76 6.02 15.36 6.68 6.11 15.60 6.75 Lussier Bassoon Raw output 3.05 5.48 7.82 3.47 6.51 7.32 3.62 7.00 7.07 3.68 7.14 7.04 3.72 7.31 6.96 3.39 7.08 6.60 WF output 4.38 7.55 7.94 4.40 9.38 6.53 4.36 9.71 6.30 4.42 9.75 6.36 4.34 9.75 6.26 3.92 9.37 5.85 Piano Raw output 1.57 3.30 8.08 1.69 4.06 6.90 1.87 4.21 7.08 1.94 4.31 7.06 1.93 4.38 6.92 1.97 4.65 6.61 WF output 3.12 6.07 7.14 3.33 6.60 6.95 3.23 6.44 6.94 3.32 6.64 6.89 3.27 6.69 6.75 2.99 6.64 6.29 Trumpet Raw output 5.01 9.37 7.47 6.28 11.26 8.25 6.61 11.67 8.51 6.56 11.54 8.52 6.55 11.57 8.49 6.38 11.49 8.27 WF output 6.00 10.18 8.49 7.14 12.86 8.71 7.38 13.55 8.77 7.23 13.43 8.62 7.22 13.49 8.58 7.23 13.54 8.57 Table 2: BSS Eval results for DNN instrument extraction (“Brahms” and “Lussier” trio, all values are given in dB) Instrument MFCC kmeans [17] Mel NMF [17] Shifted-NMF [18] DNN with WF SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn 3.87 5.76 9.41 4.17 5.83 10.17 2.95 3.34 15.20 6.80 11.68 8.79 Piano 3.30 4.42 10.76 −0.10 0.21 14.39 3.78 5.59 9.50 4.68 10.13 6.54 Violin −8.35 −7.89 10.21 9.69 19.79 10.19 7.66 10.96 10.74 6.11 15.60 6.75 Average −0.39 0.76 10.13 4.59 8.61 11.58 4.80 6.63 11.81 5.86 12.47 7.36 Lussier Bassoon 1.85 11.67 2.61 0.15 0.75 11.72 −0.83 −0.60 15.43 3.92 9.37 5.85 Piano 4.66 6.28 10.64 4.56 8.00 7.83 2.54 5.14 7.16 2.99 6.64 6.29 Trumpet −1.73 −1.29 12.18 8.46 18.12 9.05 6.57 7.39 14.95 7.23 13.54 8.57 Average 1.59 5.55 8.48 4.39 8.96 9.53 2.76 3.98 12.51 4.71 9.85 6.90 Table 3: Comparison of BSS Eval results (all values are given in dB) then clustered via kmeans. For the Mel ﬁlter bank, we use the implementation [24] of [25]. • “Mel NMF [17]”: This approach also applies a Mel ﬁlter bank of size 30 to the original frequency basis vectors and uses a sec- ond NMF to perform the clustering. • “Shifted-NMF [18]”: For this approach, we use a constant Q transform matrix with minimal frequency 55 Hz and 24 fre- quency bins per octave. The shifted-NMF decomposition is al- lowed to use a maximum of 24 shifts. The constant Q transform source code was kindly provided by D. FitzGerald and we use the Tensor toolbox [26,27] for the shifted-NMF implementation. The best SDR values in Table 3 are emphasized in bold face and we can observe that, although our DNN approach not always gives the best individual SDR per instrument, it has the best average SDR for both mixtures since it is capable of extracting three sources with similar quality. This is not the case for the NMF approaches which have one instrument with a low SIR value, i.e., one instrument that is not well separated from the others.5 In order to see the beneﬁt of the least squares initialization from Sec. 2.3 we show in Fig. 2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec. 2.2. The denominator of J gives the SSE of a baseline system where the DNN is perform- ing an identity transform. From Fig. 2 we can see that the error is signiﬁcantly decreased whenever a new layer is added as the error J exhibits downward “jumps”. These “jumps” are due to the least squares initialization of the network weights. For example, consider the training error in Fig. 2 of the network that extracts the piano: When the ﬁrst layer is added, we have an initial error of J = 0.23, which means that, using the least squares initialization from Sec. 2.3, we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1 = 0. Would we have used the 5Please note that the considered NMF approaches are only assuming to know the number of sources, i.e., they use less prior knowledge than our DNN approach. We also tried the supervised NMF approach from [28] where the frequency basis vectors are pre-trained on our instrument database. How- ever, this supervised NMF approach resulted in signiﬁcant worse SDR values as the learned frequency bases for the instruments are correlated which intro- duces interference. 600 1200 1800 2400 3000 6000 0.08 0.1 0.12 0.14 0.16 0.18 0.2 0.22 Number of L−BFGS iterations Normalized training error J 2nd layer added 3rd layer added 4th layer added 5th layer added Start fine tuning Piano Horn Violin Fig. 2: Evolution of training error for “Brahms” baseline initialization, then a simulation showed that it would have taken us 980 additional L-BFGS iterations to reach the error value of the least squares initialization. These L-BFGS iterations can be saved and, therefore, we converge much faster to a network with a good instrument extraction performance. 4. CONCLUSIONS AND FUTURE WORK In this paper, we used a deep neural network for the extraction of an instrument from music. Using only the knowledge of the instrument types, we generated the training data from a database with solo in- strument performances and the network is trained layer-wise with a least-squares initialization of the weights. During our experiments, we noticed that the material length and quality of the solo performances is important as only sufﬁcient ma- terial allows the neural network to generalize to new, i.e., before unseen, instruments. We therefore plan to incorporate the “RWC Music Instrument Sounds” database [29] as it contains high quality samples from many instruments. Furthermore, our data generation process in Sec. 2.2 currently does not exploit music theory when generating the mixtures and we think that, taking such knowledge into account, should generate training data that is better suited for the instrument extraction task. 2138
-5. REFERENCES [1] P. Comon and C. Jutten, Eds., Handbook of Blind Source Sep- aration: Independent Component Analysis and Applications, Academic Press, 2010. [2] G. R. Naik and W. Wang, Eds., Blind Source Separation: Advances in Theory, Algorithms and Applications, Springer, 2014. [3] Z. Raﬁi and B. Pardo, “Repeating pattern extraction technique (REPET): A simple method for music/voice separation,” IEEE Transactions on Audio, Speech, and Language Processing, vol. 21, no. 1, pp. 73–84, 2013. [4] J.-L. Durrieu, B. David, and G. Richard, “A musically moti- vated mid-level representation for pitch estimation and musical audio source separation,” IEEE Journal on Selected Topics on Signal Processing, vol. 5, pp. 1180–1191, 2011. [5] D. FitzGerald, “Upmixing from mono - a source separation ap- proach,” Proc. 17th International Conference on Digital Signal Processing, 2011. [6] D. FitzGerald, “The good vibrations problem,” 134th AES Convention, e-brief, 2013. [7] A. Krizhevsky, I. Sutskever, and G. E. Hinton, “Imagenet clas- siﬁcation with deep convolutional neural networks,” in Ad- vances in neural information processing systems, 2012, pp. 1097–1105. [8] C. Farabet, C. Couprie, L. Najman, and Y. LeCun, “Learning hierarchical features for scene labeling,” IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 35, no. 8, pp. 1915–1929, 2013. [9] G. Hinton, L. Deng, D. Yu, G. E. Dahl, A.-R. Mohamed, N. Jaitly, A. Senior, V. Vanhoucke, P. Nguyen, T. N. Sainath, et al., “Deep neural networks for acoustic modeling in speech recognition: The shared views of four research groups,” IEEE Signal Processing Magazine, vol. 29, no. 6, pp. 82–97, 2012. [10] E. M. Grais, M. U. Sen, and H. Erdogan, “Deep neu- ral networks for single channel source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Process- ing (ICASSP), pp. 3734–3738, 2014. [11] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Deep learning for monaural speech sepa- ration,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 1562–1566, 2014. [12] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Singing-voice separation from monaural recordings using deep recurrent neural networks,” Interna- tional Society for Music Information Retrieval Conference (ISMIR), 2014. [13] X. Glorot, A. Bordes, and Y. Bengio, “Deep sparse rectiﬁer networks,” Proceedings of the 14th International Conference on Artiﬁcial Intelligence and Statistics, vol. 15, pp. 315–323, 2011. [14] M. D. Zeiler, M. Ranzato, R. Monga, M. Mao, K. Yang, Q. V. Le, P. Nguyen, A. Senior, V. Vanhoucke, J. Dean, et al., “On rectiﬁed linear units for speech processing,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 3517–3521, 2013. [15] B. Yang, “A study of inverse short-time Fourier transform,” Proc. IEEE Conference on Acoustics, Speech, and Signal Pro- cessing (ICASSP), pp. 3541–3544, 2008. [16] P. Smaragdis and G. J. Mysore, “Separation by “humming”: User-guided sound extraction from monophonic mixtures,” IEEE Workshop on Applications of Signal Processing to Au- dio and Acoustics, pp. 69–72, 2009. [17] M. Spiertz and V. Gnann, “Source-ﬁlter based clustering for monaural blind source separation,” Proc. Int. Conference on Digital Audio Effects, 2009. [18] R. Jaiswal, D. FitzGerald, D. Barry, E. Coyle, and S. Rickard, “Clustering NMF basis functions using shifted NMF for monaural sound source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 245– 248, 2011. [19] P. C. Loizou, “Speech enhancement based on perceptually mo- tivated Bayesian estimators of the magnitude spectrum,” IEEE Transactions on Speech and Audio Processing, vol. 13, no. 5, pp. 857–869, 2005. [20] P. Vincent, H. Larochelle, Y. Bengio, and P.-A. Manzagol, “Ex- tracting and composing robust features with denoising autoen- coders,” Proceedings of the International Conference on Ma- chine Learning, pp. 1096–1103, 2008. [21] M. Chen, Z. Xu, K. Weinberger, and F. Sha, “Marginalized denoising autoencoders for domain adaptation,” Proceedings of the International Conference on Machine Learning, 2012. [22] J. Fritsch, “High quality musical audio source separation,” Master’s Thesis, UPMC / IRCAM / Telecom ParisTech, 2012. [23] E. Vincent, R. Gribonval, and C. Fevotte, “Performance mea- surement in blind audio source separation,” IEEE Transactions on Audio, Speech and Language Processing, vol. 14, no. 4, pp. 1462–1469, 2006. [24] P. Brady, “Matlab Mel ﬁlter implementation,” http://www.mathworks.com/matlabcentral/ fileexchange/23179-melfilter, 2014, [Online]. [25] F. Zheng, G. Zhang, and Z. Song, “Comparison of different implementations of MFCC,” Journal of Computer Science and Technology, vol. 16, no. 6, pp. 582–589, September 2001. [26] B. W. Bader and T. G. Kolda, “MATLAB tensor toolbox version 2.5,” http://www.sandia.gov/˜tgkolda/ TensorToolbox/, January 2012, [Online]. [27] B. W. Bader and T. G. Kolda, “Algorithm 862: MATLAB ten- sor classes for fast algorithm prototyping,” ACM Transactions on Mathematical Software, vol. 32, no. 4, pp. 635–653, De- cember 2006. [28] E. M. Grais and H. Erdogan, “Single channel speech music separation using nonnegative matrix factorization and spectral mask,” Digital Signal Processing (DSP), 2011 17th Interna- tional Conference on IEEE, pp. 1–6, 2011. [29] M. Goto, H. Hashiguchi, T. Nishimura, and R. Oka, “RWC Music Database: Music Genre Database and Musical Instru- ment Sound Database,” Proc. of the International Conference on Music Information Retrieval (ISMIR), pp. 229–230, 2003. 2139 View publication stats
-
-## Images
-
-### Image 1
-**Description:** small rectangular grayscale image (64x64)
-![Image 1](page_1_img_1_0f58f9aa.png)
-**Dimensions:** 64x64
-
-### Image 2
-**Description:** small rectangular color image (64x64)
-![Image 2](page_1_img_2_87e4f64c.png)
-**Dimensions:** 64x64
-
-### Image 3
-**Description:** small rectangular color image (64x64)
-![Image 3](page_1_img_3_1be6f0da.png)
-**Dimensions:** 64x64
-
-
-## Tables
-
-### Table 1
-| See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper · April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS READS 138 4,160 3 authors: Stefan Uhlich Franck Giron University of Stuttgart Sony Europe B.V., Zwg. Deutschland 67 PUBLICATIONS 1,229 CITATIONS 8 PUBLICATIONS 380 CITATIONS SEE PROFILE SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175 PUBLICATIONS 2,294 CITATIONS SEE PROFILE |  |
-| --- | --- |
-| All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file. |  |
-
-### Table 2
-| Instrument | Numberoffiles (=bVariations) | Materiallength |
-| --- | --- | --- |
-| Bassoon Cello Clarinet Horn Piano Saxophone Trumpet Viola Violin | 18 6 14 14 89 19 16 13 12 | 1.44hours 1.88hours 1.15hours 0.82hours 6.12hours 1.16hours 0.38hours 1.61hours 5.60hours |
-
-### Table 3
-| Instrument Output | After1stlayer SDR SIR SAR | After2ndlayer SDR SIR SAR | After3rdlayer SDR SIR SAR | After4thlayer SDR SIR SAR | After5thlayer SDR SIR SAR | Afterfinetuning SDR SIR SAR |
-| --- | --- | --- | --- | --- | --- | --- |
-| Rawoutput Horn WFoutput smharB Rawoutput Piano WFoutput Rawoutput Violin WFoutput | 3.30 4.79 9.93 4.05 5.63 10.25 | 5.15 8.19 8.73 6.36 10.20 9.08 | 5.29 8.50 8.69 6.51 10.81 8.87 | 5.38 8.66 8.69 6.58 10.99 8.87 | 5.53 9.19 8.47 6.71 11.44 8.79 | 5.70 9.57 8.44 6.80 11.68 8.79 |
-|  | 0.85 1.93 9.58 2.62 4.54 8.41 | 2.34 4.37 7.97 4.13 7.53 7.49 | 3.16 6.60 6.64 4.36 9.07 6.66 | 3.26 6.61 6.82 4.40 9.13 6.67 | 3.34 6.86 6.71 4.47 9.41 6.62 | 3.47 7.34 6.51 4.68 10.13 6.54 |
-|  | −0.23 1.88 6.11 3.62 8.57 5.86 | 3.06 9.52 4.63 5.27 14.10 6.05 | 3.49 9.21 5.33 6.04 15.19 6.74 | 3.50 9.23 5.34 6.08 15.30 6.76 | 3.57 9.44 5.33 6.02 15.36 6.68 | 3.90 10.34 5.41 6.11 15.60 6.75 |
-| Rawoutput Bassoon WFoutput reissuL Rawoutput Piano WFoutput Rawoutput Trumpet WFoutput | 3.05 5.48 7.82 4.38 7.55 7.94 | 3.47 6.51 7.32 4.40 9.38 6.53 | 3.62 7.00 7.07 4.36 9.71 6.30 | 3.68 7.14 7.04 4.42 9.75 6.36 | 3.72 7.31 6.96 4.34 9.75 6.26 | 3.39 7.08 6.60 3.92 9.37 5.85 |
-|  | 1.57 3.30 8.08 3.12 6.07 7.14 | 1.69 4.06 6.90 3.33 6.60 6.95 | 1.87 4.21 7.08 3.23 6.44 6.94 | 1.94 4.31 7.06 3.32 6.64 6.89 | 1.93 4.38 6.92 3.27 6.69 6.75 | 1.97 4.65 6.61 2.99 6.64 6.29 |
-|  | 5.01 9.37 7.47 6.00 10.18 8.49 | 6.28 11.26 8.25 7.14 12.86 8.71 | 6.61 11.67 8.51 7.38 13.55 8.77 | 6.56 11.54 8.52 7.23 13.43 8.62 | 6.55 11.57 8.49 7.22 13.49 8.58 | 6.38 11.49 8.27 7.23 13.54 8.57 |
-
-### Table 4
-| Instrument | MFCCkmeans[17] SDR SIR SAR | MelNMF[17] SDR SIR SAR | Shifted-NMF[18] SDR SIR SAR | DNNwithWF SDR SIR SAR |
-| --- | --- | --- | --- | --- |
-| Horn smharB Piano Violin Average | 3.87 5.76 9.41 3.30 4.42 10.76 −8.35 −7.89 10.21 | 4.17 5.83 10.17 −0.10 0.21 14.39 9.69 19.79 10.19 | 2.95 3.34 15.20 3.78 5.59 9.50 7.66 10.96 10.74 | 6.80 11.68 8.79 4.68 10.13 6.54 6.11 15.60 6.75 |
-|  | −0.39 0.76 10.13 | 4.59 8.61 11.58 | 4.80 6.63 11.81 | 5.86 12.47 7.36 |
-| Bassoon reissuL Piano Trumpet Average | 1.85 11.67 2.61 4.66 6.28 10.64 −1.73 −1.29 12.18 | 0.15 0.75 11.72 4.56 8.00 7.83 8.46 18.12 9.05 | −0.83 −0.60 15.43 2.54 5.14 7.16 6.57 7.39 14.95 | 3.92 9.37 5.85 2.99 6.64 6.29 7.23 13.54 8.57 |
-|  | 1.59 5.55 8.48 | 4.39 8.96 9.53 | 2.76 3.98 12.51 | 4.71 9.85 6.90 |
-
-### Table 5
-|  |  |  |  |  | dedda r |  |  | dedda r |  |  | dedda r |  |  | gninut e |  | Piano Horn Violin |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-|  |  |  |  | dr | eyal |  | ht | eyal |  | ht | eyal |  |  | nif trat |  |  |
-|  |  |  |  |  | 3 |  |  | 4 |  |  | 5 |  |  | S |  |  |
-|  |  | d |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  | edda |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | d | reyal |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-
-
-## Mathematical Formulas
-
-### Formula 1
-```latex
-i=1 vi(n)
-```
-
-### Formula 2
-```latex
-\frac{8}{15}
-```
-
-### Formula 3
-```latex
-= s(n) + M X i
-```
-
-### Formula 4
-```latex
-=1 vi(n)
-```
-
-### Formula 5
-```latex
-2135 978-1-4673-6997-\frac{8}{15}/$31.00 2015 IEEE ICASSP 2015
-```
-
-### Formula 6
-```latex
-k = 1
-```
-
-### Formula 7
-```latex
-k=1
-```
-
-### Formula 8
-```latex
-p=1
-```
-
-### Formula 9
-```latex
-b= Variations) Bassoon 18 1
-```
-
-### Formula 10
-```latex
-i = 1
-```
-
-### Formula 11
-```latex
-i=1
-```
-
-### Formula 12
-```latex
-> 0 in order to make it independent of different amplitude levels of the mixture x(n) where
-```
-
-### Formula 13
-```latex
-1 = max (Wkxk + bk
-```
-
-### Formula 14
-```latex
-i o with i = 1
-```
-
-### Formula 15
-```latex
-= 1
-```
-
-### Formula 16
-```latex
-M X i=1
-```
-
-### Formula 17
-```latex
-Mixture x(n) ..
-```
-
-### Formula 18
-```latex
-,˜s(P )o and n ˜v(1) i ,
-```
-
-### Formula 19
-```latex
-, ˜v(P ) i o with i = 1,
-```
-
-### Formula 20
-```latex
-, M where ˜s(p)\inC(2C+1)Land ˜v(p) i \inC(2C+1)L, i.e., they also contain the 2C neighboring frames
-```
-
-### Formula 21
-```latex
-These are now combined to form the DNN input/targets, i.e., x(p)= 1 \gamma(p) \alpha(p)˜s(p) + M X i=1 \alpha(p) i ˜v(p) i , (3a) 2136
-```
-
-### Formula 22
-```latex
-i=1
-```
-
-### Formula 23
-```latex
-S = 0    0 I 0    0
-```
-
-### Formula 24
-```latex
-p=1 s(p)
-```
-
-### Formula 25
-```latex
-k = 1 or the output of the (k
-```
-
-### Formula 26
-```latex
-p=1
-```
-
-### Formula 27
-```latex
-k = CsxC
-```
-
-### Formula 28
-```latex
-k= s
-```
-
-### Formula 29
-```latex
-x = P X p
-```
-
-### Formula 30
-```latex
-s =1 P PP p
-```
-
-### Formula 31
-```latex
-k = 1 P PP p
-```
-
-### Formula 32
-```latex
-L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 33
-```latex
-L = 3591 elements and corresponds to 224 milliseconds of the mixture signal
-```
-
-### Formula 34
-```latex
-P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 35
-```latex
-> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in
-```
-
-### Formula 36
-```latex
-PM i=1
-```
-
-### Formula 37
-```latex
-= arg min Wk
-```
-
-### Formula 38
-```latex
-bk P X p=1 s(p)
-```
-
-### Formula 39
-```latex
-k denotes either the pth DNN input for k = 1 or the output of the (k
-```
-
-### Formula 40
-```latex
-form and the solution is given by Winit k = CsxC
-```
-
-### Formula 41
-```latex
-binit k= s
-```
-
-### Formula 42
-```latex
-with Csx = P X p
-```
-
-### Formula 43
-```latex
-=1  s(p)
-```
-
-### Formula 44
-```latex
-Cxx = P X p
-```
-
-### Formula 45
-```latex
-=1  x(p) k
-```
-
-### Formula 46
-```latex
-and s =1 P PP p
-```
-
-### Formula 47
-```latex
-=1s(p)
-```
-
-### Formula 48
-```latex
-xk = 1 P PP p
-```
-
-### Formula 49
-```latex
-=1x(p) k
-```
-
-### Formula 50
-```latex
-we have L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 51
-```latex
-= 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN
-```
-
-### Formula 52
-```latex
-we use P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 53
-```latex
-3000 = 6000 L-BFGS iterations
-```
-
-### Formula 54
-```latex
-s(p)=\alpha(p) \gamma(p) S ˜s(p) , (3b) where \gamma(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in \alpha(p)˜s(p) + PM i=1\alpha(p) i ˜v(p) i and S \inRL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0
-```
-
-### Formula 55
-```latex
-The scalars \alpha(p), \alpha(p) 1,
-```
-
-### Formula 56
-```latex
-The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k
-```
-
-### Formula 57
-```latex
-., {Wk, bk}
-```
-
-### Formula 58
-```latex
-J = (PP p
-```
-
-### Formula 59
-```latex
-p=1
-```
-
-### Formula 60
-```latex
-J = 0
-```
-
-### Formula 61
-```latex
-2 the evolution of the normalized DNN training error J = (PP p
-```
-
-### Formula 62
-```latex
-=1
-```
-
-### Formula 63
-```latex
-PP p=1
-```
-
-### Formula 64
-```latex
-we have an initial error of J = 0
-```
-
-### Formula 65
-```latex
-we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1
-```
-
-### Formula 66
-```latex
-= 0
-```
-
-### Formula 67
-```latex
-2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec
-```
-
-### Formula 68
-```latex
-REFERENCES [1] P
-```
-
-### Formula 69
-```latex
-[2] G
-```
-
-### Formula 70
-```latex
-[3] Z
-```
-
-### Formula 71
-```latex
-[4] J.-L
-```
-
-### Formula 72
-```latex
-[5] D
-```
-
-### Formula 73
-```latex
-[6] D
-```
-
-### Formula 74
-```latex
-[7] A
-```
-
-### Formula 75
-```latex
-[8] C
-```
-
-### Formula 76
-```latex
-[9] G
-```
-
-### Formula 77
-```latex
-[10] E
-```
-
-### Formula 78
-```latex
-[11] P.-S
-```
-
-### Formula 79
-```latex
-[12] P.-S
-```
-
-### Formula 80
-```latex
-[13] X
-```
-
-### Formula 81
-```latex
-[14] M
-```
-
-### Formula 82
-```latex
-[15] B
-```
-
-### Formula 83
-```latex
-[16] P
-```
-
-### Formula 84
-```latex
-[17] M
-```
-
-### Formula 85
-```latex
-[18] R
-```
-
-### Formula 86
-```latex
-[19] P
-```
-
-### Formula 87
-```latex
-[20] P
-```
-
-### Formula 88
-```latex
-[21] M
-```
-
-### Formula 89
-```latex
-[22] J
-```
-
-### Formula 90
-```latex
-[23] E
-```
-
-### Formula 91
-```latex
-[24] P
-```
-
-### Formula 92
-```latex
-[25] F
-```
-
-### Formula 93
-```latex
-[26] B
-```
-
-### Formula 94
-```latex
-[27] B
-```
-
-### Formula 95
-```latex
-[28] E
-```
-
-### Formula 96
-```latex
-[29] M
-```
-
-
-## Forms and Fields
-
-### Form 1
-
-### Form 2
-
-### Form 3
-
-### Form 4
-
-### Form 5
-
-
-
-
-
 ### Tables and Figures
 
-# test_document
-*Converted from PDF using PPARSER*
-
-## Table of Contents
-- [Content](#content)
-- [Images](#images)
-- [Tables](#tables)
-- [Formulas](#formulas)
-- [Forms](#forms)
-
-## Content
-See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper  April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS 138 READS 4,160 3 authors: Stefan Uhlich University of Stuttgart 67PUBLICATIONS1,229CITATIONS SEE PROFILE Franck Giron Sony Europe B.V., Zwg. Deutschland 8PUBLICATIONS380CITATIONS SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175PUBLICATIONS2,294CITATIONS SEE PROFILE All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file.
-DEEP NEURAL NETWORK BASED INSTRUMENT EXTRACTION FROM MUSIC Stefan Uhlich1, Franck Giron1and Yuki Mitsufuji2 1 Sony European Technology Center (EuTEC), Stuttgart, Germany 2 Sony Corporation, Audio Technology Development Department, Tokyo, Japan ABSTRACT This paper deals with the extraction of an instrument from music by using a deep neural network. As prior information, we only as- sume to know the instrument types that are present in the mixture and, using this information, we generate the training data from a database with solo instrument performances. The neural network is built up from rectiﬁed linear units where each hidden layer has the same number of nodes as the output layer. This allows a least squares initialization of the layer weights and speeds up the training of the network considerably compared to a traditional random initializa- tion. We give results for two mixtures, each consisting of three in- struments, and evaluate the extraction performance using BSS Eval for a varying number of hidden layers. Index Terms— Deep neural network (DNN), Instrument extrac- tion, Blind source separation (BSS) 1. INTRODUCTION In this paper, we study the extraction of a target instrument s(n) ∈R from an instantaneous, monaural music mixture x(n) ∈R, i.e., of a mixture that can be written as x(n) = s(n) + M X i=1 vi(n), (1) where vi(n) is the time signal of the ith background instrument and the mixture consists thus in a total of M +1 instruments. From x(n) we want to extract an estimate ˆs(n) of the target instrument s(n) and, therefore, we can see instrument extraction as a special case of the general blind source separation (BSS) problem [1, 2]. Various applications require such an estimate ˆs(n) ranging from Karaoke systems which use a separation into a instruments and a vocal track, see [3, 4], to upmixing where one tries to obtain a multi-channel version of the monaural mixture x(n), see [5,6]. We propose a deep neural network (DNN) for the extraction of the target instrument s(n) from x(n) as DNNs have proved to work very well in various applications and have gained a lot of interest in the last years, especially for classiﬁcation tasks in image process- ing [7, 8] and for speech recognition [9]. We use the DNN in the frequency domain to estimate a target instrument from the mixture, i.e., we train the network such that we can think of it as a “denoiser” which converts the “noisy” mixture spectrogram to the “clean” in- strument spectrogram. For the training of the network, we only as- sume to know the instrument types of the target instrument s(n) and of the other background instruments v1(n), . . . , vM(n), for exam- ple that we want to extract a piano from a mixture with a violin and a horn. This is in contrast to other proposed DNN approaches for BSS of music which are supervised in the sense that they assume to have more knowledge about the signals [10–12]. Huang et. al. used in [11, 12] a deep (recurrent) neural network for the separa- tion of two sources where the neural network is extended by a ﬁnal softmask layer to extract the source estimates and it is trained using a discriminative cost function that also tries to decrease the interfer- ence by other sources. Whereas they only know the type of the target instrument (in their case: singing voice) in [12], they assume that the background is one of 110 known karaoke songs. In contrast, we only know the instrument types that appear in the mixture and, hence, we have to use a large instrument database with solo performances from various musicians and instruments. From this database, we generate the training data that allows us to generalize to new mixtures and this instrument database with the training data generation is thus a integral part of our DNN architecture. A second contribution of the paper is the efﬁcient training of the DNN: We propose a network architecture where each hidden rectiﬁed linear unit (ReLU) layer has the same number of nodes as the output layer. This allows a least squares initialization of the network weights of each layer and, using it as starting point for the limited-memory BFGS (L-BFGS) optimizer, yields a quicker convergence to good network weights. Additionally, we noticed that this initialization often results in ﬁnal network weights which have a smaller training error than if we start the training from randomly initialized weights as we ﬁnd better local minima. The remainder of this paper is organized as follows: In Sec. 2 we describe in detail the DNN based instrument extraction where in particular Sec. 2.1 explains the network structure, Sec. 2.2 shows the generation of the training data and Sec. 2.3 details the layer-wise training procedure. In Sec. 3, we give results for two music mixtures, each consisting of three instruments, before we conclude this paper in Sec. 4 where we summarize our work and give an outlook of future steps. The following notation is used throughout this paper: x denotes a column vector and X a matrix where in particular I is the identity matrix. The matrix transpose and Euclidean norm are denoted by (.)Tand ∥.∥, respectively. Furthermore, max (x, y) is the element- wise maximum operation between x and y, and |x| returns a vector with the element-wise magnitude values of x. 2. DNN BASED INSTRUMENT EXTRACTION 2.1. General Network Structure We will explain now the proposed DNN approach for extracting the target instrument s(n) from the mixture x(n), which is also depicted in Fig. 1. The extraction is done in the frequency domain and it consists of the following three steps: (a) Feature vector generation: We use a short-time Fourier trans- form (STFT) with (possibly overlapping) rectangular windows to transform the mixture signal x(n) into the frequency domain. From this frequency representation, we build a feature vector1 x ∈R(2C+1)Lby stacking the magnitude values of the current frame and the C preceding/succeeding frames where L gives the number of magnitude values per frame. The motivation for using also the 2C neighboring frames is to provide the DNN with tem- poral context that allows it to better extract the target instrument. Please note that these context frames are chosen such that they are 1For convenience, we use in the following a simpliﬁed notation and drop the frame index for x, xk, s, ˆx and γ. 2135 978-1-4673-6997-8/15/$31.00 2015 IEEE ICASSP 2015
-Mixture x(n) ... STFT ... Magnitude STFT frames of x(n) DNN input x ∈R(2C+1)L normalized by γ W1, b1 W2, b2    WK, bK DNN with K ReLU layers DNN output ˆs ∈RL rescaled with γ ... Magnitude STFT frames of ˆs(n) ISTFT ... Recovered instrument ˆs(n) Fig. 1: Instrument extraction using a deep neural network non-overlapping2. Finally, the input vector x is normalized by a scalar γ > 0 in order to make it independent of different amplitude levels of the mixture x(n) where γ is the average Euclidean norm of the 2C + 1 magnitude frames in x. (b) DNN instrument extraction: In a second step, the normalized STFT amplitude vector x is fed to a DNN, which consists of K layers with rectiﬁed linear units (ReLU), i.e., we have xk+1 = max (Wkxk + bk, 0) , k = 1, . . . , K (2) where xk denotes the input to the kth layer and in particular x1 is the DNN input x and xK+1 the DNN output ˆs. Each ReLU layer has L nodes and the network weights {Wk, bk}k=1,...,K are trained such that the DNN outputs an estimate ˆs of the magnitude frame s ∈RL of the target instrument from the mixture vector x. We can thus think of the DNN performing a denoising of the “noisy” mixture input. DNNs with ReLU activation functions have shown very good results, see for example [13, 14], and, as each layer has L hidden units, this activation function will allow us to use a layer-wise least squares initialization as will be shown in Sec. 2.3. (c) Reconstruction of the instrument: Using the phase of the original mixture STFT and multiplying each DNN output ˆs with the energy normalization γ that was applied to the corresponding input vector, we obtain an estimate of the STFT of the target instrument s(n), which we convert back into the time domain using an inverse STFT [15]. Note that the DNN outputs ˆs, i.e., the magnitude frames of the target instrument, will be overlapping as shown in Fig. 1 if the STFT in the ﬁrst step (a) was also using overlapping windows. Please refer to [15] for the ISTFT in this case. 2.2. Training Data Generation In order to train the weights {W1, b1}, . . . , {WK, bK} of the DNN, we need a training set {x(p), s(p)}p=1,...,P of P input/target pairs where x(p)∈R(2C+1)Lis a magnitude vector of the mixture with C preceding/succeeding frames and s(p)∈RLthe corre- sponding magnitude vector of the target instrument that we want to extract. In general, there are several possibilities to generate the required material for the DNN training, which differ in the prior knowledge that we have3: For the target instrument s(n), we either only know the instrument type (e.g., piano) or we have recordings from it. For the background instruments vi(n), we either have no knowledge, we know the instrument types that occur in the mixture or we even have 2E.g., if the STFT uses a overlap of 50%, then we only take every second frame to build the feature vector x. 3Beside the discussed cases, there is also the possibility that we have knowledge about the melody of the target instrument, see for example [16]. Instrument Number of ﬁles Material length (b= Variations) Bassoon 18 1.44 hours Cello 6 1.88 hours Clarinet 14 1.15 hours Horn 14 0.82 hours Piano 89 6.12 hours Saxophone 19 1.16 hours Trumpet 16 0.38 hours Viola 13 1.61 hours Violin 12 5.60 hours Table 1: Instrument database recordings of the particular instruments that occur in the mixture. The easiest case is when we have recordings of the instrument that we want to extract and of those that occur as background in the mix- ture. The most difﬁcult case is when we only know the type of the instrument that we want to extract and do not have any knowledge about the background instruments that will appear in the mixture. In this paper, we assume that we know the instrument types of the tar- get and background, e.g., we know that we want to extract a piano from a mixture with a horn and a violin. Using this prior knowl- edge is reasonable since for many songs, we either have metadata which provides information about the instruments that occur or, in case this information is missing, could be provided by the user. As we only know the instrument types that appear in the mixture, we built a musical instrument database, see Table 1 for the details. The music pieces are stored in the free lossless audio codec (FLAC) for- mat with a sampling rate of 48kHz and contain solo performances of the instruments. For each instrument type we have several ﬁles stemming from different musicians with different instruments play- ing classical masterpieces. These variations are important as we only know the instrument types and, hence, the DNN should generalize well to new instruments of the same type. For the DNN training, we ﬁrst load from the instrument database all audio ﬁles of the instruments that occur in the mixture and resam- ple them to a lower DNN system sampling rate, where the sampling rate is chosen such that the computational complexity of the total DNN system is reduced. In a second step, we convert all signals into the frequency domain using a STFT and randomly sample from the target and background instruments P complex-valued STFT vectors n ˜s(1), . . . ,˜s(P )o and n ˜v(1) i , . . . , ˜v(P ) i o with i = 1, . . . , M where ˜s(p)∈C(2C+1)Land ˜v(p) i ∈C(2C+1)L, i.e., they also contain the 2C neighboring frames. These are now combined to form the DNN input/targets, i.e., x(p)= 1 γ(p) α(p)˜s(p) + M X i=1 α(p) i ˜v(p) i , (3a) 2136
-s(p)=α(p) γ(p) S ˜s(p) , (3b) where γ(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in α(p)˜s(p) + PM i=1α(p) i ˜v(p) i and S ∈RL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0 . The scalars α(p), α(p) 1, . . . , α(p) Mdenote the random amplitudes of each instru- ment which stem from a uniform distribution with support [0.01, 1]. The normalization γ(p)is used to yield a DNN input that is inde- pendent of different amplitude levels of the mixture. Please note, however, that each instrument inside the mixture has a different amplitude α(p), α(p) 1, . . . , α(p) M, i.e., the DNN learns to extract the target instrument even if it has a varying amplitude compared to the background instruments. 2.3. DNN Training Using the dataset that we generated as outlined above, we can learn the network weights such that the sum-of-squared errors (SSE) be- tween the P targets s(p)and the DNN outputs ˆs(p)is minimized4. Due to the special network structure and the use of ReLU (cf. Sec. 2.1), we can perform a layer-wise training of the DNN. Each time a new layer is added, we ﬁrst initialize the weights using least squares estimates of Wk and bk by neglecting the nonlinear rectiﬁer function. As the target vectors s(p)are non-negative, we know that the SSE after adding the ReLU activation function can not increase and, hence, using the least-squares solution as initialization results in a good starting point for the L-BFGS solver that we then use. In the following, we will now describe in more details the two steps that we perform if a new layer is added: (a) Weight initialization: For the kth layer, we solve the optimization problem {Winit k, binit k} = arg min Wk,bk P X p=1 s(p) −  Wkx(p) k + bk  2 (4) where x(p) k denotes either the pth DNN input for k = 1 or the output of the (k −1)th layer if k > 1. Using (4), we choose the initial weights of the network such that they are the optimal linear least squares reconstruction of the targets {s(p)}p=1,...,P from the fea- tures {x(p) k}p=1,...,P . As we know that all elements of the target vector s(p)are non-negative, it is obvious that the total error can not increase by adding the ReLU activation function and, therefore, this initialization is a good starting point for the iterative training in step (b). The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k. (b) L-BFGS training: Starting from the initialization (a), we use a L-BFGS training with the SSE cost function to update the complete network, i.e., to update {W1, b1}, . . ., {Wk, bk}. 4We also tested the weighted Euclidean distance [19] as it showed good results for speech enhancement. However, we could not see an improvement and therefore use the SSE cost function in the following. These two steps are done K times in order to result in a network with K ReLU layers. Finally, after adding all layers, we do a ﬁne tuning of the complete network, where we again use L-BFGS. Using this procedure, we train the DNN as a denoising network as each layer, when it is added to the network, tries to recover the original targets s(p)from the output of the previous layer. This is similar to stacked denoising autoencoders, see [20, 21]. In our ex- periments, we have noticed that using the least squares initialization is advantageous with respect to the following two aspects if com- pared to a random initialization: First, it reduces the training time for the network considerably as we start the L-BFGS optimizer from a good initial value and, second, we found that we do not have the problem of converging to poor local minima which was sometimes the case for the random initialization. In the next section, we will show the beneﬁt of using the proposed initialization. 3. SEPARATION RESULTS In the following, we will now give results for the proposed DNN ap- proach. We consider two monaural music mixtures from the TRIOS dataset [22], each composed of three instruments: the “Brahms” trio consisting of a horn, a piano and a violin and the “Lussier” trio with a bassoon, a piano and a trumpet. We use the following settings for our experiments: The DNN system sampling rate (cf. Sec. 2.2) was chosen to be 32kHz which is a compromise between the audio quality of the extracted instru- ment and the DNN training time. For each frame, we have L = 513 magnitude values and we augment the input vector by C = 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN. Hence, one DNN input vector x has a length of (2C + 1)L = 3591 elements and corresponds to 224 milliseconds of the mixture signal. For the training, we use P = 106samples and the gen- erated training material has thus a length of 62.2 hours. During the layerwise training, we use 600 L-BFGS iterations for each new layer and the ﬁnal ﬁne tuning consists of 3000 additional L-BFGS iterations for the complete network such that in total we execute 5  600 + 3000 = 6000 L-BFGS iterations. Table 2 shows the BSS Eval values [23], i.e., the signal-to- distortion ratio (SDR), signal-to-interference ratio (SIR) and signal- to-artifact ratio (SAR) values after the addition of each ReLU layer. Besides the raw DNN outputs, we also give the BSS Eval values if we use a Wiener ﬁlter to combine the DNN outputs of the three instruments. This additional post-processing step allows an en- hancement of the source separation results since, from the raw DNN outputs, it computes for each instrument a softmask and applies it to the original mixture spectrogram. Looking at the results in Table 2, we can see that there is a noticeable improvement when adding the ﬁrst three layers but the difference becomes smaller for additional layers. For “Brahms”, the best results are obtained after adding all ﬁve layers and performing the ﬁnal ﬁne tuning. This is different for “Lussier”: For the trumpet, we can see that the network is starting to overﬁt to the training set when adding more than three layers as the SDR/SIR values start to decrease. The problem is the limited amount of material for the trumpet (22.5 minutes of solo performances, see Table 1), which is too small. Interestingly, also the DNNs for the other two instruments start to overﬁt which is probably also due to the trumpet in the mixture. From the results we can conclude that having sufﬁcient material for each instrument is vital if only the instrument type is known since only this ensures a good source separation quality and avoids overﬁtting. Table 3 shows for comparison the BSS Eval results for three unsupervised NMF based source separation approaches: • “MFCC kmeans [17]”: This approach uses a Mel ﬁlter bank of size 30 which is applied to the frequency basis vectors of the NMF decomposition in order to compute MFCCs. These are 2137
-Instrument Output After 1st layer After 2nd layer After 3rd layer After 4th layer After 5th layer After ﬁne tuning SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn Raw output 3.30 4.79 9.93 5.15 8.19 8.73 5.29 8.50 8.69 5.38 8.66 8.69 5.53 9.19 8.47 5.70 9.57 8.44 WF output 4.05 5.63 10.25 6.36 10.20 9.08 6.51 10.81 8.87 6.58 10.99 8.87 6.71 11.44 8.79 6.80 11.68 8.79 Piano Raw output 0.85 1.93 9.58 2.34 4.37 7.97 3.16 6.60 6.64 3.26 6.61 6.82 3.34 6.86 6.71 3.47 7.34 6.51 WF output 2.62 4.54 8.41 4.13 7.53 7.49 4.36 9.07 6.66 4.40 9.13 6.67 4.47 9.41 6.62 4.68 10.13 6.54 Violin Raw output −0.23 1.88 6.11 3.06 9.52 4.63 3.49 9.21 5.33 3.50 9.23 5.34 3.57 9.44 5.33 3.90 10.34 5.41 WF output 3.62 8.57 5.86 5.27 14.10 6.05 6.04 15.19 6.74 6.08 15.30 6.76 6.02 15.36 6.68 6.11 15.60 6.75 Lussier Bassoon Raw output 3.05 5.48 7.82 3.47 6.51 7.32 3.62 7.00 7.07 3.68 7.14 7.04 3.72 7.31 6.96 3.39 7.08 6.60 WF output 4.38 7.55 7.94 4.40 9.38 6.53 4.36 9.71 6.30 4.42 9.75 6.36 4.34 9.75 6.26 3.92 9.37 5.85 Piano Raw output 1.57 3.30 8.08 1.69 4.06 6.90 1.87 4.21 7.08 1.94 4.31 7.06 1.93 4.38 6.92 1.97 4.65 6.61 WF output 3.12 6.07 7.14 3.33 6.60 6.95 3.23 6.44 6.94 3.32 6.64 6.89 3.27 6.69 6.75 2.99 6.64 6.29 Trumpet Raw output 5.01 9.37 7.47 6.28 11.26 8.25 6.61 11.67 8.51 6.56 11.54 8.52 6.55 11.57 8.49 6.38 11.49 8.27 WF output 6.00 10.18 8.49 7.14 12.86 8.71 7.38 13.55 8.77 7.23 13.43 8.62 7.22 13.49 8.58 7.23 13.54 8.57 Table 2: BSS Eval results for DNN instrument extraction (“Brahms” and “Lussier” trio, all values are given in dB) Instrument MFCC kmeans [17] Mel NMF [17] Shifted-NMF [18] DNN with WF SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn 3.87 5.76 9.41 4.17 5.83 10.17 2.95 3.34 15.20 6.80 11.68 8.79 Piano 3.30 4.42 10.76 −0.10 0.21 14.39 3.78 5.59 9.50 4.68 10.13 6.54 Violin −8.35 −7.89 10.21 9.69 19.79 10.19 7.66 10.96 10.74 6.11 15.60 6.75 Average −0.39 0.76 10.13 4.59 8.61 11.58 4.80 6.63 11.81 5.86 12.47 7.36 Lussier Bassoon 1.85 11.67 2.61 0.15 0.75 11.72 −0.83 −0.60 15.43 3.92 9.37 5.85 Piano 4.66 6.28 10.64 4.56 8.00 7.83 2.54 5.14 7.16 2.99 6.64 6.29 Trumpet −1.73 −1.29 12.18 8.46 18.12 9.05 6.57 7.39 14.95 7.23 13.54 8.57 Average 1.59 5.55 8.48 4.39 8.96 9.53 2.76 3.98 12.51 4.71 9.85 6.90 Table 3: Comparison of BSS Eval results (all values are given in dB) then clustered via kmeans. For the Mel ﬁlter bank, we use the implementation [24] of [25]. • “Mel NMF [17]”: This approach also applies a Mel ﬁlter bank of size 30 to the original frequency basis vectors and uses a sec- ond NMF to perform the clustering. • “Shifted-NMF [18]”: For this approach, we use a constant Q transform matrix with minimal frequency 55 Hz and 24 fre- quency bins per octave. The shifted-NMF decomposition is al- lowed to use a maximum of 24 shifts. The constant Q transform source code was kindly provided by D. FitzGerald and we use the Tensor toolbox [26,27] for the shifted-NMF implementation. The best SDR values in Table 3 are emphasized in bold face and we can observe that, although our DNN approach not always gives the best individual SDR per instrument, it has the best average SDR for both mixtures since it is capable of extracting three sources with similar quality. This is not the case for the NMF approaches which have one instrument with a low SIR value, i.e., one instrument that is not well separated from the others.5 In order to see the beneﬁt of the least squares initialization from Sec. 2.3 we show in Fig. 2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec. 2.2. The denominator of J gives the SSE of a baseline system where the DNN is perform- ing an identity transform. From Fig. 2 we can see that the error is signiﬁcantly decreased whenever a new layer is added as the error J exhibits downward “jumps”. These “jumps” are due to the least squares initialization of the network weights. For example, consider the training error in Fig. 2 of the network that extracts the piano: When the ﬁrst layer is added, we have an initial error of J = 0.23, which means that, using the least squares initialization from Sec. 2.3, we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1 = 0. Would we have used the 5Please note that the considered NMF approaches are only assuming to know the number of sources, i.e., they use less prior knowledge than our DNN approach. We also tried the supervised NMF approach from [28] where the frequency basis vectors are pre-trained on our instrument database. How- ever, this supervised NMF approach resulted in signiﬁcant worse SDR values as the learned frequency bases for the instruments are correlated which intro- duces interference. 600 1200 1800 2400 3000 6000 0.08 0.1 0.12 0.14 0.16 0.18 0.2 0.22 Number of L−BFGS iterations Normalized training error J 2nd layer added 3rd layer added 4th layer added 5th layer added Start fine tuning Piano Horn Violin Fig. 2: Evolution of training error for “Brahms” baseline initialization, then a simulation showed that it would have taken us 980 additional L-BFGS iterations to reach the error value of the least squares initialization. These L-BFGS iterations can be saved and, therefore, we converge much faster to a network with a good instrument extraction performance. 4. CONCLUSIONS AND FUTURE WORK In this paper, we used a deep neural network for the extraction of an instrument from music. Using only the knowledge of the instrument types, we generated the training data from a database with solo in- strument performances and the network is trained layer-wise with a least-squares initialization of the weights. During our experiments, we noticed that the material length and quality of the solo performances is important as only sufﬁcient ma- terial allows the neural network to generalize to new, i.e., before unseen, instruments. We therefore plan to incorporate the “RWC Music Instrument Sounds” database [29] as it contains high quality samples from many instruments. Furthermore, our data generation process in Sec. 2.2 currently does not exploit music theory when generating the mixtures and we think that, taking such knowledge into account, should generate training data that is better suited for the instrument extraction task. 2138
-5. REFERENCES [1] P. Comon and C. Jutten, Eds., Handbook of Blind Source Sep- aration: Independent Component Analysis and Applications, Academic Press, 2010. [2] G. R. Naik and W. Wang, Eds., Blind Source Separation: Advances in Theory, Algorithms and Applications, Springer, 2014. [3] Z. Raﬁi and B. Pardo, “Repeating pattern extraction technique (REPET): A simple method for music/voice separation,” IEEE Transactions on Audio, Speech, and Language Processing, vol. 21, no. 1, pp. 73–84, 2013. [4] J.-L. Durrieu, B. David, and G. Richard, “A musically moti- vated mid-level representation for pitch estimation and musical audio source separation,” IEEE Journal on Selected Topics on Signal Processing, vol. 5, pp. 1180–1191, 2011. [5] D. FitzGerald, “Upmixing from mono - a source separation ap- proach,” Proc. 17th International Conference on Digital Signal Processing, 2011. [6] D. FitzGerald, “The good vibrations problem,” 134th AES Convention, e-brief, 2013. [7] A. Krizhevsky, I. Sutskever, and G. E. Hinton, “Imagenet clas- siﬁcation with deep convolutional neural networks,” in Ad- vances in neural information processing systems, 2012, pp. 1097–1105. [8] C. Farabet, C. Couprie, L. Najman, and Y. LeCun, “Learning hierarchical features for scene labeling,” IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 35, no. 8, pp. 1915–1929, 2013. [9] G. Hinton, L. Deng, D. Yu, G. E. Dahl, A.-R. Mohamed, N. Jaitly, A. Senior, V. Vanhoucke, P. Nguyen, T. N. Sainath, et al., “Deep neural networks for acoustic modeling in speech recognition: The shared views of four research groups,” IEEE Signal Processing Magazine, vol. 29, no. 6, pp. 82–97, 2012. [10] E. M. Grais, M. U. Sen, and H. Erdogan, “Deep neu- ral networks for single channel source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Process- ing (ICASSP), pp. 3734–3738, 2014. [11] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Deep learning for monaural speech sepa- ration,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 1562–1566, 2014. [12] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Singing-voice separation from monaural recordings using deep recurrent neural networks,” Interna- tional Society for Music Information Retrieval Conference (ISMIR), 2014. [13] X. Glorot, A. Bordes, and Y. Bengio, “Deep sparse rectiﬁer networks,” Proceedings of the 14th International Conference on Artiﬁcial Intelligence and Statistics, vol. 15, pp. 315–323, 2011. [14] M. D. Zeiler, M. Ranzato, R. Monga, M. Mao, K. Yang, Q. V. Le, P. Nguyen, A. Senior, V. Vanhoucke, J. Dean, et al., “On rectiﬁed linear units for speech processing,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 3517–3521, 2013. [15] B. Yang, “A study of inverse short-time Fourier transform,” Proc. IEEE Conference on Acoustics, Speech, and Signal Pro- cessing (ICASSP), pp. 3541–3544, 2008. [16] P. Smaragdis and G. J. Mysore, “Separation by “humming”: User-guided sound extraction from monophonic mixtures,” IEEE Workshop on Applications of Signal Processing to Au- dio and Acoustics, pp. 69–72, 2009. [17] M. Spiertz and V. Gnann, “Source-ﬁlter based clustering for monaural blind source separation,” Proc. Int. Conference on Digital Audio Effects, 2009. [18] R. Jaiswal, D. FitzGerald, D. Barry, E. Coyle, and S. Rickard, “Clustering NMF basis functions using shifted NMF for monaural sound source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 245– 248, 2011. [19] P. C. Loizou, “Speech enhancement based on perceptually mo- tivated Bayesian estimators of the magnitude spectrum,” IEEE Transactions on Speech and Audio Processing, vol. 13, no. 5, pp. 857–869, 2005. [20] P. Vincent, H. Larochelle, Y. Bengio, and P.-A. Manzagol, “Ex- tracting and composing robust features with denoising autoen- coders,” Proceedings of the International Conference on Ma- chine Learning, pp. 1096–1103, 2008. [21] M. Chen, Z. Xu, K. Weinberger, and F. Sha, “Marginalized denoising autoencoders for domain adaptation,” Proceedings of the International Conference on Machine Learning, 2012. [22] J. Fritsch, “High quality musical audio source separation,” Master’s Thesis, UPMC / IRCAM / Telecom ParisTech, 2012. [23] E. Vincent, R. Gribonval, and C. Fevotte, “Performance mea- surement in blind audio source separation,” IEEE Transactions on Audio, Speech and Language Processing, vol. 14, no. 4, pp. 1462–1469, 2006. [24] P. Brady, “Matlab Mel ﬁlter implementation,” http://www.mathworks.com/matlabcentral/ fileexchange/23179-melfilter, 2014, [Online]. [25] F. Zheng, G. Zhang, and Z. Song, “Comparison of different implementations of MFCC,” Journal of Computer Science and Technology, vol. 16, no. 6, pp. 582–589, September 2001. [26] B. W. Bader and T. G. Kolda, “MATLAB tensor toolbox version 2.5,” http://www.sandia.gov/˜tgkolda/ TensorToolbox/, January 2012, [Online]. [27] B. W. Bader and T. G. Kolda, “Algorithm 862: MATLAB ten- sor classes for fast algorithm prototyping,” ACM Transactions on Mathematical Software, vol. 32, no. 4, pp. 635–653, De- cember 2006. [28] E. M. Grais and H. Erdogan, “Single channel speech music separation using nonnegative matrix factorization and spectral mask,” Digital Signal Processing (DSP), 2011 17th Interna- tional Conference on IEEE, pp. 1–6, 2011. [29] M. Goto, H. Hashiguchi, T. Nishimura, and R. Oka, “RWC Music Database: Music Genre Database and Musical Instru- ment Sound Database,” Proc. of the International Conference on Music Information Retrieval (ISMIR), pp. 229–230, 2003. 2139 View publication stats
-
-## Images
-
-### Image 1
-**Description:** small rectangular grayscale image (64x64)
-![Image 1](page_1_img_1_0f58f9aa.png)
-**Dimensions:** 64x64
-
-### Image 2
-**Description:** small rectangular color image (64x64)
-![Image 2](page_1_img_2_87e4f64c.png)
-**Dimensions:** 64x64
-
-### Image 3
-**Description:** small rectangular color image (64x64)
-![Image 3](page_1_img_3_1be6f0da.png)
-**Dimensions:** 64x64
-
-
-## Tables
-
-### Table 1
-| See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper · April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS READS 138 4,160 3 authors: Stefan Uhlich Franck Giron University of Stuttgart Sony Europe B.V., Zwg. Deutschland 67 PUBLICATIONS 1,229 CITATIONS 8 PUBLICATIONS 380 CITATIONS SEE PROFILE SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175 PUBLICATIONS 2,294 CITATIONS SEE PROFILE |  |
-| --- | --- |
-| All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file. |  |
-
-### Table 2
-| Instrument | Numberoffiles (=bVariations) | Materiallength |
-| --- | --- | --- |
-| Bassoon Cello Clarinet Horn Piano Saxophone Trumpet Viola Violin | 18 6 14 14 89 19 16 13 12 | 1.44hours 1.88hours 1.15hours 0.82hours 6.12hours 1.16hours 0.38hours 1.61hours 5.60hours |
-
-### Table 3
-| Instrument Output | After1stlayer SDR SIR SAR | After2ndlayer SDR SIR SAR | After3rdlayer SDR SIR SAR | After4thlayer SDR SIR SAR | After5thlayer SDR SIR SAR | Afterfinetuning SDR SIR SAR |
-| --- | --- | --- | --- | --- | --- | --- |
-| Rawoutput Horn WFoutput smharB Rawoutput Piano WFoutput Rawoutput Violin WFoutput | 3.30 4.79 9.93 4.05 5.63 10.25 | 5.15 8.19 8.73 6.36 10.20 9.08 | 5.29 8.50 8.69 6.51 10.81 8.87 | 5.38 8.66 8.69 6.58 10.99 8.87 | 5.53 9.19 8.47 6.71 11.44 8.79 | 5.70 9.57 8.44 6.80 11.68 8.79 |
-|  | 0.85 1.93 9.58 2.62 4.54 8.41 | 2.34 4.37 7.97 4.13 7.53 7.49 | 3.16 6.60 6.64 4.36 9.07 6.66 | 3.26 6.61 6.82 4.40 9.13 6.67 | 3.34 6.86 6.71 4.47 9.41 6.62 | 3.47 7.34 6.51 4.68 10.13 6.54 |
-|  | −0.23 1.88 6.11 3.62 8.57 5.86 | 3.06 9.52 4.63 5.27 14.10 6.05 | 3.49 9.21 5.33 6.04 15.19 6.74 | 3.50 9.23 5.34 6.08 15.30 6.76 | 3.57 9.44 5.33 6.02 15.36 6.68 | 3.90 10.34 5.41 6.11 15.60 6.75 |
-| Rawoutput Bassoon WFoutput reissuL Rawoutput Piano WFoutput Rawoutput Trumpet WFoutput | 3.05 5.48 7.82 4.38 7.55 7.94 | 3.47 6.51 7.32 4.40 9.38 6.53 | 3.62 7.00 7.07 4.36 9.71 6.30 | 3.68 7.14 7.04 4.42 9.75 6.36 | 3.72 7.31 6.96 4.34 9.75 6.26 | 3.39 7.08 6.60 3.92 9.37 5.85 |
-|  | 1.57 3.30 8.08 3.12 6.07 7.14 | 1.69 4.06 6.90 3.33 6.60 6.95 | 1.87 4.21 7.08 3.23 6.44 6.94 | 1.94 4.31 7.06 3.32 6.64 6.89 | 1.93 4.38 6.92 3.27 6.69 6.75 | 1.97 4.65 6.61 2.99 6.64 6.29 |
-|  | 5.01 9.37 7.47 6.00 10.18 8.49 | 6.28 11.26 8.25 7.14 12.86 8.71 | 6.61 11.67 8.51 7.38 13.55 8.77 | 6.56 11.54 8.52 7.23 13.43 8.62 | 6.55 11.57 8.49 7.22 13.49 8.58 | 6.38 11.49 8.27 7.23 13.54 8.57 |
-
-### Table 4
-| Instrument | MFCCkmeans[17] SDR SIR SAR | MelNMF[17] SDR SIR SAR | Shifted-NMF[18] SDR SIR SAR | DNNwithWF SDR SIR SAR |
-| --- | --- | --- | --- | --- |
-| Horn smharB Piano Violin Average | 3.87 5.76 9.41 3.30 4.42 10.76 −8.35 −7.89 10.21 | 4.17 5.83 10.17 −0.10 0.21 14.39 9.69 19.79 10.19 | 2.95 3.34 15.20 3.78 5.59 9.50 7.66 10.96 10.74 | 6.80 11.68 8.79 4.68 10.13 6.54 6.11 15.60 6.75 |
-|  | −0.39 0.76 10.13 | 4.59 8.61 11.58 | 4.80 6.63 11.81 | 5.86 12.47 7.36 |
-| Bassoon reissuL Piano Trumpet Average | 1.85 11.67 2.61 4.66 6.28 10.64 −1.73 −1.29 12.18 | 0.15 0.75 11.72 4.56 8.00 7.83 8.46 18.12 9.05 | −0.83 −0.60 15.43 2.54 5.14 7.16 6.57 7.39 14.95 | 3.92 9.37 5.85 2.99 6.64 6.29 7.23 13.54 8.57 |
-|  | 1.59 5.55 8.48 | 4.39 8.96 9.53 | 2.76 3.98 12.51 | 4.71 9.85 6.90 |
-
-### Table 5
-|  |  |  |  |  | dedda r |  |  | dedda r |  |  | dedda r |  |  | gninut e |  | Piano Horn Violin |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-|  |  |  |  | dr | eyal |  | ht | eyal |  | ht | eyal |  |  | nif trat |  |  |
-|  |  |  |  |  | 3 |  |  | 4 |  |  | 5 |  |  | S |  |  |
-|  |  | d |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  | edda |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | d | reyal |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-
-
-## Mathematical Formulas
-
-### Formula 1
-```latex
-i=1 vi(n)
-```
-
-### Formula 2
-```latex
-\frac{8}{15}
-```
-
-### Formula 3
-```latex
-= s(n) + M X i
-```
-
-### Formula 4
-```latex
-=1 vi(n)
-```
-
-### Formula 5
-```latex
-2135 978-1-4673-6997-\frac{8}{15}/$31.00 2015 IEEE ICASSP 2015
-```
-
-### Formula 6
-```latex
-k = 1
-```
-
-### Formula 7
-```latex
-k=1
-```
-
-### Formula 8
-```latex
-p=1
-```
-
-### Formula 9
-```latex
-b= Variations) Bassoon 18 1
-```
-
-### Formula 10
-```latex
-i = 1
-```
-
-### Formula 11
-```latex
-i=1
-```
-
-### Formula 12
-```latex
-> 0 in order to make it independent of different amplitude levels of the mixture x(n) where
-```
-
-### Formula 13
-```latex
-1 = max (Wkxk + bk
-```
-
-### Formula 14
-```latex
-i o with i = 1
-```
-
-### Formula 15
-```latex
-= 1
-```
-
-### Formula 16
-```latex
-M X i=1
-```
-
-### Formula 17
-```latex
-Mixture x(n) ..
-```
-
-### Formula 18
-```latex
-,˜s(P )o and n ˜v(1) i ,
-```
-
-### Formula 19
-```latex
-, ˜v(P ) i o with i = 1,
-```
-
-### Formula 20
-```latex
-, M where ˜s(p)\inC(2C+1)Land ˜v(p) i \inC(2C+1)L, i.e., they also contain the 2C neighboring frames
-```
-
-### Formula 21
-```latex
-These are now combined to form the DNN input/targets, i.e., x(p)= 1 \gamma(p) \alpha(p)˜s(p) + M X i=1 \alpha(p) i ˜v(p) i , (3a) 2136
-```
-
-### Formula 22
-```latex
-i=1
-```
-
-### Formula 23
-```latex
-S = 0    0 I 0    0
-```
-
-### Formula 24
-```latex
-p=1 s(p)
-```
-
-### Formula 25
-```latex
-k = 1 or the output of the (k
-```
-
-### Formula 26
-```latex
-p=1
-```
-
-### Formula 27
-```latex
-k = CsxC
-```
-
-### Formula 28
-```latex
-k= s
-```
-
-### Formula 29
-```latex
-x = P X p
-```
-
-### Formula 30
-```latex
-s =1 P PP p
-```
-
-### Formula 31
-```latex
-k = 1 P PP p
-```
-
-### Formula 32
-```latex
-L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 33
-```latex
-L = 3591 elements and corresponds to 224 milliseconds of the mixture signal
-```
-
-### Formula 34
-```latex
-P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 35
-```latex
-> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in
-```
-
-### Formula 36
-```latex
-PM i=1
-```
-
-### Formula 37
-```latex
-= arg min Wk
-```
-
-### Formula 38
-```latex
-bk P X p=1 s(p)
-```
-
-### Formula 39
-```latex
-k denotes either the pth DNN input for k = 1 or the output of the (k
-```
-
-### Formula 40
-```latex
-form and the solution is given by Winit k = CsxC
-```
-
-### Formula 41
-```latex
-binit k= s
-```
-
-### Formula 42
-```latex
-with Csx = P X p
-```
-
-### Formula 43
-```latex
-=1  s(p)
-```
-
-### Formula 44
-```latex
-Cxx = P X p
-```
-
-### Formula 45
-```latex
-=1  x(p) k
-```
-
-### Formula 46
-```latex
-and s =1 P PP p
-```
-
-### Formula 47
-```latex
-=1s(p)
-```
-
-### Formula 48
-```latex
-xk = 1 P PP p
-```
-
-### Formula 49
-```latex
-=1x(p) k
-```
-
-### Formula 50
-```latex
-we have L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 51
-```latex
-= 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN
-```
-
-### Formula 52
-```latex
-we use P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 53
-```latex
-3000 = 6000 L-BFGS iterations
-```
-
-### Formula 54
-```latex
-s(p)=\alpha(p) \gamma(p) S ˜s(p) , (3b) where \gamma(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in \alpha(p)˜s(p) + PM i=1\alpha(p) i ˜v(p) i and S \inRL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0
-```
-
-### Formula 55
-```latex
-The scalars \alpha(p), \alpha(p) 1,
-```
-
-### Formula 56
-```latex
-The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k
-```
-
-### Formula 57
-```latex
-., {Wk, bk}
-```
-
-### Formula 58
-```latex
-J = (PP p
-```
-
-### Formula 59
-```latex
-p=1
-```
-
-### Formula 60
-```latex
-J = 0
-```
-
-### Formula 61
-```latex
-2 the evolution of the normalized DNN training error J = (PP p
-```
-
-### Formula 62
-```latex
-=1
-```
-
-### Formula 63
-```latex
-PP p=1
-```
-
-### Formula 64
-```latex
-we have an initial error of J = 0
-```
-
-### Formula 65
-```latex
-we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1
-```
-
-### Formula 66
-```latex
-= 0
-```
-
-### Formula 67
-```latex
-2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec
-```
-
-### Formula 68
-```latex
-REFERENCES [1] P
-```
-
-### Formula 69
-```latex
-[2] G
-```
-
-### Formula 70
-```latex
-[3] Z
-```
-
-### Formula 71
-```latex
-[4] J.-L
-```
-
-### Formula 72
-```latex
-[5] D
-```
-
-### Formula 73
-```latex
-[6] D
-```
-
-### Formula 74
-```latex
-[7] A
-```
-
-### Formula 75
-```latex
-[8] C
-```
-
-### Formula 76
-```latex
-[9] G
-```
-
-### Formula 77
-```latex
-[10] E
-```
-
-### Formula 78
-```latex
-[11] P.-S
-```
-
-### Formula 79
-```latex
-[12] P.-S
-```
-
-### Formula 80
-```latex
-[13] X
-```
-
-### Formula 81
-```latex
-[14] M
-```
-
-### Formula 82
-```latex
-[15] B
-```
-
-### Formula 83
-```latex
-[16] P
-```
-
-### Formula 84
-```latex
-[17] M
-```
-
-### Formula 85
-```latex
-[18] R
-```
-
-### Formula 86
-```latex
-[19] P
-```
-
-### Formula 87
-```latex
-[20] P
-```
-
-### Formula 88
-```latex
-[21] M
-```
-
-### Formula 89
-```latex
-[22] J
-```
-
-### Formula 90
-```latex
-[23] E
-```
-
-### Formula 91
-```latex
-[24] P
-```
-
-### Formula 92
-```latex
-[25] F
-```
-
-### Formula 93
-```latex
-[26] B
-```
-
-### Formula 94
-```latex
-[27] B
-```
-
-### Formula 95
-```latex
-[28] E
-```
-
-### Formula 96
-```latex
-[29] M
-```
-
-
-## Forms and Fields
-
-### Form 1
-
-### Form 2
-
-### Form 3
-
-### Form 4
-
-### Form 5
-
-
-
-
-
-## Discussion
-
-# test_document
-*Converted from PDF using PPARSER*
-
-## Table of Contents
-- [Content](#content)
-- [Images](#images)
-- [Tables](#tables)
-- [Formulas](#formulas)
-- [Forms](#forms)
-
-## Content
-See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper  April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS 138 READS 4,160 3 authors: Stefan Uhlich University of Stuttgart 67PUBLICATIONS1,229CITATIONS SEE PROFILE Franck Giron Sony Europe B.V., Zwg. Deutschland 8PUBLICATIONS380CITATIONS SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175PUBLICATIONS2,294CITATIONS SEE PROFILE All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file.
-DEEP NEURAL NETWORK BASED INSTRUMENT EXTRACTION FROM MUSIC Stefan Uhlich1, Franck Giron1and Yuki Mitsufuji2 1 Sony European Technology Center (EuTEC), Stuttgart, Germany 2 Sony Corporation, Audio Technology Development Department, Tokyo, Japan ABSTRACT This paper deals with the extraction of an instrument from music by using a deep neural network. As prior information, we only as- sume to know the instrument types that are present in the mixture and, using this information, we generate the training data from a database with solo instrument performances. The neural network is built up from rectiﬁed linear units where each hidden layer has the same number of nodes as the output layer. This allows a least squares initialization of the layer weights and speeds up the training of the network considerably compared to a traditional random initializa- tion. We give results for two mixtures, each consisting of three in- struments, and evaluate the extraction performance using BSS Eval for a varying number of hidden layers. Index Terms— Deep neural network (DNN), Instrument extrac- tion, Blind source separation (BSS) 1. INTRODUCTION In this paper, we study the extraction of a target instrument s(n) ∈R from an instantaneous, monaural music mixture x(n) ∈R, i.e., of a mixture that can be written as x(n) = s(n) + M X i=1 vi(n), (1) where vi(n) is the time signal of the ith background instrument and the mixture consists thus in a total of M +1 instruments. From x(n) we want to extract an estimate ˆs(n) of the target instrument s(n) and, therefore, we can see instrument extraction as a special case of the general blind source separation (BSS) problem [1, 2]. Various applications require such an estimate ˆs(n) ranging from Karaoke systems which use a separation into a instruments and a vocal track, see [3, 4], to upmixing where one tries to obtain a multi-channel version of the monaural mixture x(n), see [5,6]. We propose a deep neural network (DNN) for the extraction of the target instrument s(n) from x(n) as DNNs have proved to work very well in various applications and have gained a lot of interest in the last years, especially for classiﬁcation tasks in image process- ing [7, 8] and for speech recognition [9]. We use the DNN in the frequency domain to estimate a target instrument from the mixture, i.e., we train the network such that we can think of it as a “denoiser” which converts the “noisy” mixture spectrogram to the “clean” in- strument spectrogram. For the training of the network, we only as- sume to know the instrument types of the target instrument s(n) and of the other background instruments v1(n), . . . , vM(n), for exam- ple that we want to extract a piano from a mixture with a violin and a horn. This is in contrast to other proposed DNN approaches for BSS of music which are supervised in the sense that they assume to have more knowledge about the signals [10–12]. Huang et. al. used in [11, 12] a deep (recurrent) neural network for the separa- tion of two sources where the neural network is extended by a ﬁnal softmask layer to extract the source estimates and it is trained using a discriminative cost function that also tries to decrease the interfer- ence by other sources. Whereas they only know the type of the target instrument (in their case: singing voice) in [12], they assume that the background is one of 110 known karaoke songs. In contrast, we only know the instrument types that appear in the mixture and, hence, we have to use a large instrument database with solo performances from various musicians and instruments. From this database, we generate the training data that allows us to generalize to new mixtures and this instrument database with the training data generation is thus a integral part of our DNN architecture. A second contribution of the paper is the efﬁcient training of the DNN: We propose a network architecture where each hidden rectiﬁed linear unit (ReLU) layer has the same number of nodes as the output layer. This allows a least squares initialization of the network weights of each layer and, using it as starting point for the limited-memory BFGS (L-BFGS) optimizer, yields a quicker convergence to good network weights. Additionally, we noticed that this initialization often results in ﬁnal network weights which have a smaller training error than if we start the training from randomly initialized weights as we ﬁnd better local minima. The remainder of this paper is organized as follows: In Sec. 2 we describe in detail the DNN based instrument extraction where in particular Sec. 2.1 explains the network structure, Sec. 2.2 shows the generation of the training data and Sec. 2.3 details the layer-wise training procedure. In Sec. 3, we give results for two music mixtures, each consisting of three instruments, before we conclude this paper in Sec. 4 where we summarize our work and give an outlook of future steps. The following notation is used throughout this paper: x denotes a column vector and X a matrix where in particular I is the identity matrix. The matrix transpose and Euclidean norm are denoted by (.)Tand ∥.∥, respectively. Furthermore, max (x, y) is the element- wise maximum operation between x and y, and |x| returns a vector with the element-wise magnitude values of x. 2. DNN BASED INSTRUMENT EXTRACTION 2.1. General Network Structure We will explain now the proposed DNN approach for extracting the target instrument s(n) from the mixture x(n), which is also depicted in Fig. 1. The extraction is done in the frequency domain and it consists of the following three steps: (a) Feature vector generation: We use a short-time Fourier trans- form (STFT) with (possibly overlapping) rectangular windows to transform the mixture signal x(n) into the frequency domain. From this frequency representation, we build a feature vector1 x ∈R(2C+1)Lby stacking the magnitude values of the current frame and the C preceding/succeeding frames where L gives the number of magnitude values per frame. The motivation for using also the 2C neighboring frames is to provide the DNN with tem- poral context that allows it to better extract the target instrument. Please note that these context frames are chosen such that they are 1For convenience, we use in the following a simpliﬁed notation and drop the frame index for x, xk, s, ˆx and γ. 2135 978-1-4673-6997-8/15/$31.00 2015 IEEE ICASSP 2015
-Mixture x(n) ... STFT ... Magnitude STFT frames of x(n) DNN input x ∈R(2C+1)L normalized by γ W1, b1 W2, b2    WK, bK DNN with K ReLU layers DNN output ˆs ∈RL rescaled with γ ... Magnitude STFT frames of ˆs(n) ISTFT ... Recovered instrument ˆs(n) Fig. 1: Instrument extraction using a deep neural network non-overlapping2. Finally, the input vector x is normalized by a scalar γ > 0 in order to make it independent of different amplitude levels of the mixture x(n) where γ is the average Euclidean norm of the 2C + 1 magnitude frames in x. (b) DNN instrument extraction: In a second step, the normalized STFT amplitude vector x is fed to a DNN, which consists of K layers with rectiﬁed linear units (ReLU), i.e., we have xk+1 = max (Wkxk + bk, 0) , k = 1, . . . , K (2) where xk denotes the input to the kth layer and in particular x1 is the DNN input x and xK+1 the DNN output ˆs. Each ReLU layer has L nodes and the network weights {Wk, bk}k=1,...,K are trained such that the DNN outputs an estimate ˆs of the magnitude frame s ∈RL of the target instrument from the mixture vector x. We can thus think of the DNN performing a denoising of the “noisy” mixture input. DNNs with ReLU activation functions have shown very good results, see for example [13, 14], and, as each layer has L hidden units, this activation function will allow us to use a layer-wise least squares initialization as will be shown in Sec. 2.3. (c) Reconstruction of the instrument: Using the phase of the original mixture STFT and multiplying each DNN output ˆs with the energy normalization γ that was applied to the corresponding input vector, we obtain an estimate of the STFT of the target instrument s(n), which we convert back into the time domain using an inverse STFT [15]. Note that the DNN outputs ˆs, i.e., the magnitude frames of the target instrument, will be overlapping as shown in Fig. 1 if the STFT in the ﬁrst step (a) was also using overlapping windows. Please refer to [15] for the ISTFT in this case. 2.2. Training Data Generation In order to train the weights {W1, b1}, . . . , {WK, bK} of the DNN, we need a training set {x(p), s(p)}p=1,...,P of P input/target pairs where x(p)∈R(2C+1)Lis a magnitude vector of the mixture with C preceding/succeeding frames and s(p)∈RLthe corre- sponding magnitude vector of the target instrument that we want to extract. In general, there are several possibilities to generate the required material for the DNN training, which differ in the prior knowledge that we have3: For the target instrument s(n), we either only know the instrument type (e.g., piano) or we have recordings from it. For the background instruments vi(n), we either have no knowledge, we know the instrument types that occur in the mixture or we even have 2E.g., if the STFT uses a overlap of 50%, then we only take every second frame to build the feature vector x. 3Beside the discussed cases, there is also the possibility that we have knowledge about the melody of the target instrument, see for example [16]. Instrument Number of ﬁles Material length (b= Variations) Bassoon 18 1.44 hours Cello 6 1.88 hours Clarinet 14 1.15 hours Horn 14 0.82 hours Piano 89 6.12 hours Saxophone 19 1.16 hours Trumpet 16 0.38 hours Viola 13 1.61 hours Violin 12 5.60 hours Table 1: Instrument database recordings of the particular instruments that occur in the mixture. The easiest case is when we have recordings of the instrument that we want to extract and of those that occur as background in the mix- ture. The most difﬁcult case is when we only know the type of the instrument that we want to extract and do not have any knowledge about the background instruments that will appear in the mixture. In this paper, we assume that we know the instrument types of the tar- get and background, e.g., we know that we want to extract a piano from a mixture with a horn and a violin. Using this prior knowl- edge is reasonable since for many songs, we either have metadata which provides information about the instruments that occur or, in case this information is missing, could be provided by the user. As we only know the instrument types that appear in the mixture, we built a musical instrument database, see Table 1 for the details. The music pieces are stored in the free lossless audio codec (FLAC) for- mat with a sampling rate of 48kHz and contain solo performances of the instruments. For each instrument type we have several ﬁles stemming from different musicians with different instruments play- ing classical masterpieces. These variations are important as we only know the instrument types and, hence, the DNN should generalize well to new instruments of the same type. For the DNN training, we ﬁrst load from the instrument database all audio ﬁles of the instruments that occur in the mixture and resam- ple them to a lower DNN system sampling rate, where the sampling rate is chosen such that the computational complexity of the total DNN system is reduced. In a second step, we convert all signals into the frequency domain using a STFT and randomly sample from the target and background instruments P complex-valued STFT vectors n ˜s(1), . . . ,˜s(P )o and n ˜v(1) i , . . . , ˜v(P ) i o with i = 1, . . . , M where ˜s(p)∈C(2C+1)Land ˜v(p) i ∈C(2C+1)L, i.e., they also contain the 2C neighboring frames. These are now combined to form the DNN input/targets, i.e., x(p)= 1 γ(p) α(p)˜s(p) + M X i=1 α(p) i ˜v(p) i , (3a) 2136
-s(p)=α(p) γ(p) S ˜s(p) , (3b) where γ(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in α(p)˜s(p) + PM i=1α(p) i ˜v(p) i and S ∈RL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0 . The scalars α(p), α(p) 1, . . . , α(p) Mdenote the random amplitudes of each instru- ment which stem from a uniform distribution with support [0.01, 1]. The normalization γ(p)is used to yield a DNN input that is inde- pendent of different amplitude levels of the mixture. Please note, however, that each instrument inside the mixture has a different amplitude α(p), α(p) 1, . . . , α(p) M, i.e., the DNN learns to extract the target instrument even if it has a varying amplitude compared to the background instruments. 2.3. DNN Training Using the dataset that we generated as outlined above, we can learn the network weights such that the sum-of-squared errors (SSE) be- tween the P targets s(p)and the DNN outputs ˆs(p)is minimized4. Due to the special network structure and the use of ReLU (cf. Sec. 2.1), we can perform a layer-wise training of the DNN. Each time a new layer is added, we ﬁrst initialize the weights using least squares estimates of Wk and bk by neglecting the nonlinear rectiﬁer function. As the target vectors s(p)are non-negative, we know that the SSE after adding the ReLU activation function can not increase and, hence, using the least-squares solution as initialization results in a good starting point for the L-BFGS solver that we then use. In the following, we will now describe in more details the two steps that we perform if a new layer is added: (a) Weight initialization: For the kth layer, we solve the optimization problem {Winit k, binit k} = arg min Wk,bk P X p=1 s(p) −  Wkx(p) k + bk  2 (4) where x(p) k denotes either the pth DNN input for k = 1 or the output of the (k −1)th layer if k > 1. Using (4), we choose the initial weights of the network such that they are the optimal linear least squares reconstruction of the targets {s(p)}p=1,...,P from the fea- tures {x(p) k}p=1,...,P . As we know that all elements of the target vector s(p)are non-negative, it is obvious that the total error can not increase by adding the ReLU activation function and, therefore, this initialization is a good starting point for the iterative training in step (b). The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k. (b) L-BFGS training: Starting from the initialization (a), we use a L-BFGS training with the SSE cost function to update the complete network, i.e., to update {W1, b1}, . . ., {Wk, bk}. 4We also tested the weighted Euclidean distance [19] as it showed good results for speech enhancement. However, we could not see an improvement and therefore use the SSE cost function in the following. These two steps are done K times in order to result in a network with K ReLU layers. Finally, after adding all layers, we do a ﬁne tuning of the complete network, where we again use L-BFGS. Using this procedure, we train the DNN as a denoising network as each layer, when it is added to the network, tries to recover the original targets s(p)from the output of the previous layer. This is similar to stacked denoising autoencoders, see [20, 21]. In our ex- periments, we have noticed that using the least squares initialization is advantageous with respect to the following two aspects if com- pared to a random initialization: First, it reduces the training time for the network considerably as we start the L-BFGS optimizer from a good initial value and, second, we found that we do not have the problem of converging to poor local minima which was sometimes the case for the random initialization. In the next section, we will show the beneﬁt of using the proposed initialization. 3. SEPARATION RESULTS In the following, we will now give results for the proposed DNN ap- proach. We consider two monaural music mixtures from the TRIOS dataset [22], each composed of three instruments: the “Brahms” trio consisting of a horn, a piano and a violin and the “Lussier” trio with a bassoon, a piano and a trumpet. We use the following settings for our experiments: The DNN system sampling rate (cf. Sec. 2.2) was chosen to be 32kHz which is a compromise between the audio quality of the extracted instru- ment and the DNN training time. For each frame, we have L = 513 magnitude values and we augment the input vector by C = 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN. Hence, one DNN input vector x has a length of (2C + 1)L = 3591 elements and corresponds to 224 milliseconds of the mixture signal. For the training, we use P = 106samples and the gen- erated training material has thus a length of 62.2 hours. During the layerwise training, we use 600 L-BFGS iterations for each new layer and the ﬁnal ﬁne tuning consists of 3000 additional L-BFGS iterations for the complete network such that in total we execute 5  600 + 3000 = 6000 L-BFGS iterations. Table 2 shows the BSS Eval values [23], i.e., the signal-to- distortion ratio (SDR), signal-to-interference ratio (SIR) and signal- to-artifact ratio (SAR) values after the addition of each ReLU layer. Besides the raw DNN outputs, we also give the BSS Eval values if we use a Wiener ﬁlter to combine the DNN outputs of the three instruments. This additional post-processing step allows an en- hancement of the source separation results since, from the raw DNN outputs, it computes for each instrument a softmask and applies it to the original mixture spectrogram. Looking at the results in Table 2, we can see that there is a noticeable improvement when adding the ﬁrst three layers but the difference becomes smaller for additional layers. For “Brahms”, the best results are obtained after adding all ﬁve layers and performing the ﬁnal ﬁne tuning. This is different for “Lussier”: For the trumpet, we can see that the network is starting to overﬁt to the training set when adding more than three layers as the SDR/SIR values start to decrease. The problem is the limited amount of material for the trumpet (22.5 minutes of solo performances, see Table 1), which is too small. Interestingly, also the DNNs for the other two instruments start to overﬁt which is probably also due to the trumpet in the mixture. From the results we can conclude that having sufﬁcient material for each instrument is vital if only the instrument type is known since only this ensures a good source separation quality and avoids overﬁtting. Table 3 shows for comparison the BSS Eval results for three unsupervised NMF based source separation approaches: • “MFCC kmeans [17]”: This approach uses a Mel ﬁlter bank of size 30 which is applied to the frequency basis vectors of the NMF decomposition in order to compute MFCCs. These are 2137
-Instrument Output After 1st layer After 2nd layer After 3rd layer After 4th layer After 5th layer After ﬁne tuning SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn Raw output 3.30 4.79 9.93 5.15 8.19 8.73 5.29 8.50 8.69 5.38 8.66 8.69 5.53 9.19 8.47 5.70 9.57 8.44 WF output 4.05 5.63 10.25 6.36 10.20 9.08 6.51 10.81 8.87 6.58 10.99 8.87 6.71 11.44 8.79 6.80 11.68 8.79 Piano Raw output 0.85 1.93 9.58 2.34 4.37 7.97 3.16 6.60 6.64 3.26 6.61 6.82 3.34 6.86 6.71 3.47 7.34 6.51 WF output 2.62 4.54 8.41 4.13 7.53 7.49 4.36 9.07 6.66 4.40 9.13 6.67 4.47 9.41 6.62 4.68 10.13 6.54 Violin Raw output −0.23 1.88 6.11 3.06 9.52 4.63 3.49 9.21 5.33 3.50 9.23 5.34 3.57 9.44 5.33 3.90 10.34 5.41 WF output 3.62 8.57 5.86 5.27 14.10 6.05 6.04 15.19 6.74 6.08 15.30 6.76 6.02 15.36 6.68 6.11 15.60 6.75 Lussier Bassoon Raw output 3.05 5.48 7.82 3.47 6.51 7.32 3.62 7.00 7.07 3.68 7.14 7.04 3.72 7.31 6.96 3.39 7.08 6.60 WF output 4.38 7.55 7.94 4.40 9.38 6.53 4.36 9.71 6.30 4.42 9.75 6.36 4.34 9.75 6.26 3.92 9.37 5.85 Piano Raw output 1.57 3.30 8.08 1.69 4.06 6.90 1.87 4.21 7.08 1.94 4.31 7.06 1.93 4.38 6.92 1.97 4.65 6.61 WF output 3.12 6.07 7.14 3.33 6.60 6.95 3.23 6.44 6.94 3.32 6.64 6.89 3.27 6.69 6.75 2.99 6.64 6.29 Trumpet Raw output 5.01 9.37 7.47 6.28 11.26 8.25 6.61 11.67 8.51 6.56 11.54 8.52 6.55 11.57 8.49 6.38 11.49 8.27 WF output 6.00 10.18 8.49 7.14 12.86 8.71 7.38 13.55 8.77 7.23 13.43 8.62 7.22 13.49 8.58 7.23 13.54 8.57 Table 2: BSS Eval results for DNN instrument extraction (“Brahms” and “Lussier” trio, all values are given in dB) Instrument MFCC kmeans [17] Mel NMF [17] Shifted-NMF [18] DNN with WF SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn 3.87 5.76 9.41 4.17 5.83 10.17 2.95 3.34 15.20 6.80 11.68 8.79 Piano 3.30 4.42 10.76 −0.10 0.21 14.39 3.78 5.59 9.50 4.68 10.13 6.54 Violin −8.35 −7.89 10.21 9.69 19.79 10.19 7.66 10.96 10.74 6.11 15.60 6.75 Average −0.39 0.76 10.13 4.59 8.61 11.58 4.80 6.63 11.81 5.86 12.47 7.36 Lussier Bassoon 1.85 11.67 2.61 0.15 0.75 11.72 −0.83 −0.60 15.43 3.92 9.37 5.85 Piano 4.66 6.28 10.64 4.56 8.00 7.83 2.54 5.14 7.16 2.99 6.64 6.29 Trumpet −1.73 −1.29 12.18 8.46 18.12 9.05 6.57 7.39 14.95 7.23 13.54 8.57 Average 1.59 5.55 8.48 4.39 8.96 9.53 2.76 3.98 12.51 4.71 9.85 6.90 Table 3: Comparison of BSS Eval results (all values are given in dB) then clustered via kmeans. For the Mel ﬁlter bank, we use the implementation [24] of [25]. • “Mel NMF [17]”: This approach also applies a Mel ﬁlter bank of size 30 to the original frequency basis vectors and uses a sec- ond NMF to perform the clustering. • “Shifted-NMF [18]”: For this approach, we use a constant Q transform matrix with minimal frequency 55 Hz and 24 fre- quency bins per octave. The shifted-NMF decomposition is al- lowed to use a maximum of 24 shifts. The constant Q transform source code was kindly provided by D. FitzGerald and we use the Tensor toolbox [26,27] for the shifted-NMF implementation. The best SDR values in Table 3 are emphasized in bold face and we can observe that, although our DNN approach not always gives the best individual SDR per instrument, it has the best average SDR for both mixtures since it is capable of extracting three sources with similar quality. This is not the case for the NMF approaches which have one instrument with a low SIR value, i.e., one instrument that is not well separated from the others.5 In order to see the beneﬁt of the least squares initialization from Sec. 2.3 we show in Fig. 2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec. 2.2. The denominator of J gives the SSE of a baseline system where the DNN is perform- ing an identity transform. From Fig. 2 we can see that the error is signiﬁcantly decreased whenever a new layer is added as the error J exhibits downward “jumps”. These “jumps” are due to the least squares initialization of the network weights. For example, consider the training error in Fig. 2 of the network that extracts the piano: When the ﬁrst layer is added, we have an initial error of J = 0.23, which means that, using the least squares initialization from Sec. 2.3, we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1 = 0. Would we have used the 5Please note that the considered NMF approaches are only assuming to know the number of sources, i.e., they use less prior knowledge than our DNN approach. We also tried the supervised NMF approach from [28] where the frequency basis vectors are pre-trained on our instrument database. How- ever, this supervised NMF approach resulted in signiﬁcant worse SDR values as the learned frequency bases for the instruments are correlated which intro- duces interference. 600 1200 1800 2400 3000 6000 0.08 0.1 0.12 0.14 0.16 0.18 0.2 0.22 Number of L−BFGS iterations Normalized training error J 2nd layer added 3rd layer added 4th layer added 5th layer added Start fine tuning Piano Horn Violin Fig. 2: Evolution of training error for “Brahms” baseline initialization, then a simulation showed that it would have taken us 980 additional L-BFGS iterations to reach the error value of the least squares initialization. These L-BFGS iterations can be saved and, therefore, we converge much faster to a network with a good instrument extraction performance. 4. CONCLUSIONS AND FUTURE WORK In this paper, we used a deep neural network for the extraction of an instrument from music. Using only the knowledge of the instrument types, we generated the training data from a database with solo in- strument performances and the network is trained layer-wise with a least-squares initialization of the weights. During our experiments, we noticed that the material length and quality of the solo performances is important as only sufﬁcient ma- terial allows the neural network to generalize to new, i.e., before unseen, instruments. We therefore plan to incorporate the “RWC Music Instrument Sounds” database [29] as it contains high quality samples from many instruments. Furthermore, our data generation process in Sec. 2.2 currently does not exploit music theory when generating the mixtures and we think that, taking such knowledge into account, should generate training data that is better suited for the instrument extraction task. 2138
-5. REFERENCES [1] P. Comon and C. Jutten, Eds., Handbook of Blind Source Sep- aration: Independent Component Analysis and Applications, Academic Press, 2010. [2] G. R. Naik and W. Wang, Eds., Blind Source Separation: Advances in Theory, Algorithms and Applications, Springer, 2014. [3] Z. Raﬁi and B. Pardo, “Repeating pattern extraction technique (REPET): A simple method for music/voice separation,” IEEE Transactions on Audio, Speech, and Language Processing, vol. 21, no. 1, pp. 73–84, 2013. [4] J.-L. Durrieu, B. David, and G. Richard, “A musically moti- vated mid-level representation for pitch estimation and musical audio source separation,” IEEE Journal on Selected Topics on Signal Processing, vol. 5, pp. 1180–1191, 2011. [5] D. FitzGerald, “Upmixing from mono - a source separation ap- proach,” Proc. 17th International Conference on Digital Signal Processing, 2011. [6] D. FitzGerald, “The good vibrations problem,” 134th AES Convention, e-brief, 2013. [7] A. Krizhevsky, I. Sutskever, and G. E. Hinton, “Imagenet clas- siﬁcation with deep convolutional neural networks,” in Ad- vances in neural information processing systems, 2012, pp. 1097–1105. [8] C. Farabet, C. Couprie, L. Najman, and Y. LeCun, “Learning hierarchical features for scene labeling,” IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 35, no. 8, pp. 1915–1929, 2013. [9] G. Hinton, L. Deng, D. Yu, G. E. Dahl, A.-R. Mohamed, N. Jaitly, A. Senior, V. Vanhoucke, P. Nguyen, T. N. Sainath, et al., “Deep neural networks for acoustic modeling in speech recognition: The shared views of four research groups,” IEEE Signal Processing Magazine, vol. 29, no. 6, pp. 82–97, 2012. [10] E. M. Grais, M. U. Sen, and H. Erdogan, “Deep neu- ral networks for single channel source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Process- ing (ICASSP), pp. 3734–3738, 2014. [11] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Deep learning for monaural speech sepa- ration,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 1562–1566, 2014. [12] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Singing-voice separation from monaural recordings using deep recurrent neural networks,” Interna- tional Society for Music Information Retrieval Conference (ISMIR), 2014. [13] X. Glorot, A. Bordes, and Y. Bengio, “Deep sparse rectiﬁer networks,” Proceedings of the 14th International Conference on Artiﬁcial Intelligence and Statistics, vol. 15, pp. 315–323, 2011. [14] M. D. Zeiler, M. Ranzato, R. Monga, M. Mao, K. Yang, Q. V. Le, P. Nguyen, A. Senior, V. Vanhoucke, J. Dean, et al., “On rectiﬁed linear units for speech processing,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 3517–3521, 2013. [15] B. Yang, “A study of inverse short-time Fourier transform,” Proc. IEEE Conference on Acoustics, Speech, and Signal Pro- cessing (ICASSP), pp. 3541–3544, 2008. [16] P. Smaragdis and G. J. Mysore, “Separation by “humming”: User-guided sound extraction from monophonic mixtures,” IEEE Workshop on Applications of Signal Processing to Au- dio and Acoustics, pp. 69–72, 2009. [17] M. Spiertz and V. Gnann, “Source-ﬁlter based clustering for monaural blind source separation,” Proc. Int. Conference on Digital Audio Effects, 2009. [18] R. Jaiswal, D. FitzGerald, D. Barry, E. Coyle, and S. Rickard, “Clustering NMF basis functions using shifted NMF for monaural sound source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 245– 248, 2011. [19] P. C. Loizou, “Speech enhancement based on perceptually mo- tivated Bayesian estimators of the magnitude spectrum,” IEEE Transactions on Speech and Audio Processing, vol. 13, no. 5, pp. 857–869, 2005. [20] P. Vincent, H. Larochelle, Y. Bengio, and P.-A. Manzagol, “Ex- tracting and composing robust features with denoising autoen- coders,” Proceedings of the International Conference on Ma- chine Learning, pp. 1096–1103, 2008. [21] M. Chen, Z. Xu, K. Weinberger, and F. Sha, “Marginalized denoising autoencoders for domain adaptation,” Proceedings of the International Conference on Machine Learning, 2012. [22] J. Fritsch, “High quality musical audio source separation,” Master’s Thesis, UPMC / IRCAM / Telecom ParisTech, 2012. [23] E. Vincent, R. Gribonval, and C. Fevotte, “Performance mea- surement in blind audio source separation,” IEEE Transactions on Audio, Speech and Language Processing, vol. 14, no. 4, pp. 1462–1469, 2006. [24] P. Brady, “Matlab Mel ﬁlter implementation,” http://www.mathworks.com/matlabcentral/ fileexchange/23179-melfilter, 2014, [Online]. [25] F. Zheng, G. Zhang, and Z. Song, “Comparison of different implementations of MFCC,” Journal of Computer Science and Technology, vol. 16, no. 6, pp. 582–589, September 2001. [26] B. W. Bader and T. G. Kolda, “MATLAB tensor toolbox version 2.5,” http://www.sandia.gov/˜tgkolda/ TensorToolbox/, January 2012, [Online]. [27] B. W. Bader and T. G. Kolda, “Algorithm 862: MATLAB ten- sor classes for fast algorithm prototyping,” ACM Transactions on Mathematical Software, vol. 32, no. 4, pp. 635–653, De- cember 2006. [28] E. M. Grais and H. Erdogan, “Single channel speech music separation using nonnegative matrix factorization and spectral mask,” Digital Signal Processing (DSP), 2011 17th Interna- tional Conference on IEEE, pp. 1–6, 2011. [29] M. Goto, H. Hashiguchi, T. Nishimura, and R. Oka, “RWC Music Database: Music Genre Database and Musical Instru- ment Sound Database,” Proc. of the International Conference on Music Information Retrieval (ISMIR), pp. 229–230, 2003. 2139 View publication stats
-
-## Images
-
-### Image 1
-**Description:** small rectangular grayscale image (64x64)
-![Image 1](page_1_img_1_0f58f9aa.png)
-**Dimensions:** 64x64
-
-### Image 2
-**Description:** small rectangular color image (64x64)
-![Image 2](page_1_img_2_87e4f64c.png)
-**Dimensions:** 64x64
-
-### Image 3
-**Description:** small rectangular color image (64x64)
-![Image 3](page_1_img_3_1be6f0da.png)
-**Dimensions:** 64x64
-
-
-## Tables
-
-### Table 1
-| See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper · April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS READS 138 4,160 3 authors: Stefan Uhlich Franck Giron University of Stuttgart Sony Europe B.V., Zwg. Deutschland 67 PUBLICATIONS 1,229 CITATIONS 8 PUBLICATIONS 380 CITATIONS SEE PROFILE SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175 PUBLICATIONS 2,294 CITATIONS SEE PROFILE |  |
-| --- | --- |
-| All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file. |  |
-
-### Table 2
-| Instrument | Numberoffiles (=bVariations) | Materiallength |
-| --- | --- | --- |
-| Bassoon Cello Clarinet Horn Piano Saxophone Trumpet Viola Violin | 18 6 14 14 89 19 16 13 12 | 1.44hours 1.88hours 1.15hours 0.82hours 6.12hours 1.16hours 0.38hours 1.61hours 5.60hours |
-
-### Table 3
-| Instrument Output | After1stlayer SDR SIR SAR | After2ndlayer SDR SIR SAR | After3rdlayer SDR SIR SAR | After4thlayer SDR SIR SAR | After5thlayer SDR SIR SAR | Afterfinetuning SDR SIR SAR |
-| --- | --- | --- | --- | --- | --- | --- |
-| Rawoutput Horn WFoutput smharB Rawoutput Piano WFoutput Rawoutput Violin WFoutput | 3.30 4.79 9.93 4.05 5.63 10.25 | 5.15 8.19 8.73 6.36 10.20 9.08 | 5.29 8.50 8.69 6.51 10.81 8.87 | 5.38 8.66 8.69 6.58 10.99 8.87 | 5.53 9.19 8.47 6.71 11.44 8.79 | 5.70 9.57 8.44 6.80 11.68 8.79 |
-|  | 0.85 1.93 9.58 2.62 4.54 8.41 | 2.34 4.37 7.97 4.13 7.53 7.49 | 3.16 6.60 6.64 4.36 9.07 6.66 | 3.26 6.61 6.82 4.40 9.13 6.67 | 3.34 6.86 6.71 4.47 9.41 6.62 | 3.47 7.34 6.51 4.68 10.13 6.54 |
-|  | −0.23 1.88 6.11 3.62 8.57 5.86 | 3.06 9.52 4.63 5.27 14.10 6.05 | 3.49 9.21 5.33 6.04 15.19 6.74 | 3.50 9.23 5.34 6.08 15.30 6.76 | 3.57 9.44 5.33 6.02 15.36 6.68 | 3.90 10.34 5.41 6.11 15.60 6.75 |
-| Rawoutput Bassoon WFoutput reissuL Rawoutput Piano WFoutput Rawoutput Trumpet WFoutput | 3.05 5.48 7.82 4.38 7.55 7.94 | 3.47 6.51 7.32 4.40 9.38 6.53 | 3.62 7.00 7.07 4.36 9.71 6.30 | 3.68 7.14 7.04 4.42 9.75 6.36 | 3.72 7.31 6.96 4.34 9.75 6.26 | 3.39 7.08 6.60 3.92 9.37 5.85 |
-|  | 1.57 3.30 8.08 3.12 6.07 7.14 | 1.69 4.06 6.90 3.33 6.60 6.95 | 1.87 4.21 7.08 3.23 6.44 6.94 | 1.94 4.31 7.06 3.32 6.64 6.89 | 1.93 4.38 6.92 3.27 6.69 6.75 | 1.97 4.65 6.61 2.99 6.64 6.29 |
-|  | 5.01 9.37 7.47 6.00 10.18 8.49 | 6.28 11.26 8.25 7.14 12.86 8.71 | 6.61 11.67 8.51 7.38 13.55 8.77 | 6.56 11.54 8.52 7.23 13.43 8.62 | 6.55 11.57 8.49 7.22 13.49 8.58 | 6.38 11.49 8.27 7.23 13.54 8.57 |
-
-### Table 4
-| Instrument | MFCCkmeans[17] SDR SIR SAR | MelNMF[17] SDR SIR SAR | Shifted-NMF[18] SDR SIR SAR | DNNwithWF SDR SIR SAR |
-| --- | --- | --- | --- | --- |
-| Horn smharB Piano Violin Average | 3.87 5.76 9.41 3.30 4.42 10.76 −8.35 −7.89 10.21 | 4.17 5.83 10.17 −0.10 0.21 14.39 9.69 19.79 10.19 | 2.95 3.34 15.20 3.78 5.59 9.50 7.66 10.96 10.74 | 6.80 11.68 8.79 4.68 10.13 6.54 6.11 15.60 6.75 |
-|  | −0.39 0.76 10.13 | 4.59 8.61 11.58 | 4.80 6.63 11.81 | 5.86 12.47 7.36 |
-| Bassoon reissuL Piano Trumpet Average | 1.85 11.67 2.61 4.66 6.28 10.64 −1.73 −1.29 12.18 | 0.15 0.75 11.72 4.56 8.00 7.83 8.46 18.12 9.05 | −0.83 −0.60 15.43 2.54 5.14 7.16 6.57 7.39 14.95 | 3.92 9.37 5.85 2.99 6.64 6.29 7.23 13.54 8.57 |
-|  | 1.59 5.55 8.48 | 4.39 8.96 9.53 | 2.76 3.98 12.51 | 4.71 9.85 6.90 |
-
-### Table 5
-|  |  |  |  |  | dedda r |  |  | dedda r |  |  | dedda r |  |  | gninut e |  | Piano Horn Violin |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-|  |  |  |  | dr | eyal |  | ht | eyal |  | ht | eyal |  |  | nif trat |  |  |
-|  |  |  |  |  | 3 |  |  | 4 |  |  | 5 |  |  | S |  |  |
-|  |  | d |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  | edda |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | d | reyal |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-
-
-## Mathematical Formulas
-
-### Formula 1
-```latex
-i=1 vi(n)
-```
-
-### Formula 2
-```latex
-\frac{8}{15}
-```
-
-### Formula 3
-```latex
-= s(n) + M X i
-```
-
-### Formula 4
-```latex
-=1 vi(n)
-```
-
-### Formula 5
-```latex
-2135 978-1-4673-6997-\frac{8}{15}/$31.00 2015 IEEE ICASSP 2015
-```
-
-### Formula 6
-```latex
-k = 1
-```
-
-### Formula 7
-```latex
-k=1
-```
-
-### Formula 8
-```latex
-p=1
-```
-
-### Formula 9
-```latex
-b= Variations) Bassoon 18 1
-```
-
-### Formula 10
-```latex
-i = 1
-```
-
-### Formula 11
-```latex
-i=1
-```
-
-### Formula 12
-```latex
-> 0 in order to make it independent of different amplitude levels of the mixture x(n) where
-```
-
-### Formula 13
-```latex
-1 = max (Wkxk + bk
-```
-
-### Formula 14
-```latex
-i o with i = 1
-```
-
-### Formula 15
-```latex
-= 1
-```
-
-### Formula 16
-```latex
-M X i=1
-```
-
-### Formula 17
-```latex
-Mixture x(n) ..
-```
-
-### Formula 18
-```latex
-,˜s(P )o and n ˜v(1) i ,
-```
-
-### Formula 19
-```latex
-, ˜v(P ) i o with i = 1,
-```
-
-### Formula 20
-```latex
-, M where ˜s(p)\inC(2C+1)Land ˜v(p) i \inC(2C+1)L, i.e., they also contain the 2C neighboring frames
-```
-
-### Formula 21
-```latex
-These are now combined to form the DNN input/targets, i.e., x(p)= 1 \gamma(p) \alpha(p)˜s(p) + M X i=1 \alpha(p) i ˜v(p) i , (3a) 2136
-```
-
-### Formula 22
-```latex
-i=1
-```
-
-### Formula 23
-```latex
-S = 0    0 I 0    0
-```
-
-### Formula 24
-```latex
-p=1 s(p)
-```
-
-### Formula 25
-```latex
-k = 1 or the output of the (k
-```
-
-### Formula 26
-```latex
-p=1
-```
-
-### Formula 27
-```latex
-k = CsxC
-```
-
-### Formula 28
-```latex
-k= s
-```
-
-### Formula 29
-```latex
-x = P X p
-```
-
-### Formula 30
-```latex
-s =1 P PP p
-```
-
-### Formula 31
-```latex
-k = 1 P PP p
-```
-
-### Formula 32
-```latex
-L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 33
-```latex
-L = 3591 elements and corresponds to 224 milliseconds of the mixture signal
-```
-
-### Formula 34
-```latex
-P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 35
-```latex
-> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in
-```
-
-### Formula 36
-```latex
-PM i=1
-```
-
-### Formula 37
-```latex
-= arg min Wk
-```
-
-### Formula 38
-```latex
-bk P X p=1 s(p)
-```
-
-### Formula 39
-```latex
-k denotes either the pth DNN input for k = 1 or the output of the (k
-```
-
-### Formula 40
-```latex
-form and the solution is given by Winit k = CsxC
-```
-
-### Formula 41
-```latex
-binit k= s
-```
-
-### Formula 42
-```latex
-with Csx = P X p
-```
-
-### Formula 43
-```latex
-=1  s(p)
-```
-
-### Formula 44
-```latex
-Cxx = P X p
-```
-
-### Formula 45
-```latex
-=1  x(p) k
-```
-
-### Formula 46
-```latex
-and s =1 P PP p
-```
-
-### Formula 47
-```latex
-=1s(p)
-```
-
-### Formula 48
-```latex
-xk = 1 P PP p
-```
-
-### Formula 49
-```latex
-=1x(p) k
-```
-
-### Formula 50
-```latex
-we have L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 51
-```latex
-= 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN
-```
-
-### Formula 52
-```latex
-we use P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 53
-```latex
-3000 = 6000 L-BFGS iterations
-```
-
-### Formula 54
-```latex
-s(p)=\alpha(p) \gamma(p) S ˜s(p) , (3b) where \gamma(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in \alpha(p)˜s(p) + PM i=1\alpha(p) i ˜v(p) i and S \inRL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0
-```
-
-### Formula 55
-```latex
-The scalars \alpha(p), \alpha(p) 1,
-```
-
-### Formula 56
-```latex
-The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k
-```
-
-### Formula 57
-```latex
-., {Wk, bk}
-```
-
-### Formula 58
-```latex
-J = (PP p
-```
-
-### Formula 59
-```latex
-p=1
-```
-
-### Formula 60
-```latex
-J = 0
-```
-
-### Formula 61
-```latex
-2 the evolution of the normalized DNN training error J = (PP p
-```
-
-### Formula 62
-```latex
-=1
-```
-
-### Formula 63
-```latex
-PP p=1
-```
-
-### Formula 64
-```latex
-we have an initial error of J = 0
-```
-
-### Formula 65
-```latex
-we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1
-```
-
-### Formula 66
-```latex
-= 0
-```
-
-### Formula 67
-```latex
-2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec
-```
-
-### Formula 68
-```latex
-REFERENCES [1] P
-```
-
-### Formula 69
-```latex
-[2] G
-```
-
-### Formula 70
-```latex
-[3] Z
-```
-
-### Formula 71
-```latex
-[4] J.-L
-```
-
-### Formula 72
-```latex
-[5] D
-```
-
-### Formula 73
-```latex
-[6] D
-```
-
-### Formula 74
-```latex
-[7] A
-```
-
-### Formula 75
-```latex
-[8] C
-```
-
-### Formula 76
-```latex
-[9] G
-```
-
-### Formula 77
-```latex
-[10] E
-```
-
-### Formula 78
-```latex
-[11] P.-S
-```
-
-### Formula 79
-```latex
-[12] P.-S
-```
-
-### Formula 80
-```latex
-[13] X
-```
-
-### Formula 81
-```latex
-[14] M
-```
-
-### Formula 82
-```latex
-[15] B
-```
-
-### Formula 83
-```latex
-[16] P
-```
-
-### Formula 84
-```latex
-[17] M
-```
-
-### Formula 85
-```latex
-[18] R
-```
-
-### Formula 86
-```latex
-[19] P
-```
-
-### Formula 87
-```latex
-[20] P
-```
-
-### Formula 88
-```latex
-[21] M
-```
-
-### Formula 89
-```latex
-[22] J
-```
-
-### Formula 90
-```latex
-[23] E
-```
-
-### Formula 91
-```latex
-[24] P
-```
-
-### Formula 92
-```latex
-[25] F
-```
-
-### Formula 93
-```latex
-[26] B
-```
-
-### Formula 94
-```latex
-[27] B
-```
-
-### Formula 95
-```latex
-[28] E
-```
-
-### Formula 96
-```latex
-[29] M
-```
-
-
-## Forms and Fields
-
-### Form 1
-
-### Form 2
-
-### Form 3
-
-### Form 4
-
-### Form 5
-
-
-
-
-
-## Conclusion
-
-# test_document
-*Converted from PDF using PPARSER*
-
-## Table of Contents
-- [Content](#content)
-- [Images](#images)
-- [Tables](#tables)
-- [Formulas](#formulas)
-- [Forms](#forms)
-
-## Content
-See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper  April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS 138 READS 4,160 3 authors: Stefan Uhlich University of Stuttgart 67PUBLICATIONS1,229CITATIONS SEE PROFILE Franck Giron Sony Europe B.V., Zwg. Deutschland 8PUBLICATIONS380CITATIONS SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175PUBLICATIONS2,294CITATIONS SEE PROFILE All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file.
-DEEP NEURAL NETWORK BASED INSTRUMENT EXTRACTION FROM MUSIC Stefan Uhlich1, Franck Giron1and Yuki Mitsufuji2 1 Sony European Technology Center (EuTEC), Stuttgart, Germany 2 Sony Corporation, Audio Technology Development Department, Tokyo, Japan ABSTRACT This paper deals with the extraction of an instrument from music by using a deep neural network. As prior information, we only as- sume to know the instrument types that are present in the mixture and, using this information, we generate the training data from a database with solo instrument performances. The neural network is built up from rectiﬁed linear units where each hidden layer has the same number of nodes as the output layer. This allows a least squares initialization of the layer weights and speeds up the training of the network considerably compared to a traditional random initializa- tion. We give results for two mixtures, each consisting of three in- struments, and evaluate the extraction performance using BSS Eval for a varying number of hidden layers. Index Terms— Deep neural network (DNN), Instrument extrac- tion, Blind source separation (BSS) 1. INTRODUCTION In this paper, we study the extraction of a target instrument s(n) ∈R from an instantaneous, monaural music mixture x(n) ∈R, i.e., of a mixture that can be written as x(n) = s(n) + M X i=1 vi(n), (1) where vi(n) is the time signal of the ith background instrument and the mixture consists thus in a total of M +1 instruments. From x(n) we want to extract an estimate ˆs(n) of the target instrument s(n) and, therefore, we can see instrument extraction as a special case of the general blind source separation (BSS) problem [1, 2]. Various applications require such an estimate ˆs(n) ranging from Karaoke systems which use a separation into a instruments and a vocal track, see [3, 4], to upmixing where one tries to obtain a multi-channel version of the monaural mixture x(n), see [5,6]. We propose a deep neural network (DNN) for the extraction of the target instrument s(n) from x(n) as DNNs have proved to work very well in various applications and have gained a lot of interest in the last years, especially for classiﬁcation tasks in image process- ing [7, 8] and for speech recognition [9]. We use the DNN in the frequency domain to estimate a target instrument from the mixture, i.e., we train the network such that we can think of it as a “denoiser” which converts the “noisy” mixture spectrogram to the “clean” in- strument spectrogram. For the training of the network, we only as- sume to know the instrument types of the target instrument s(n) and of the other background instruments v1(n), . . . , vM(n), for exam- ple that we want to extract a piano from a mixture with a violin and a horn. This is in contrast to other proposed DNN approaches for BSS of music which are supervised in the sense that they assume to have more knowledge about the signals [10–12]. Huang et. al. used in [11, 12] a deep (recurrent) neural network for the separa- tion of two sources where the neural network is extended by a ﬁnal softmask layer to extract the source estimates and it is trained using a discriminative cost function that also tries to decrease the interfer- ence by other sources. Whereas they only know the type of the target instrument (in their case: singing voice) in [12], they assume that the background is one of 110 known karaoke songs. In contrast, we only know the instrument types that appear in the mixture and, hence, we have to use a large instrument database with solo performances from various musicians and instruments. From this database, we generate the training data that allows us to generalize to new mixtures and this instrument database with the training data generation is thus a integral part of our DNN architecture. A second contribution of the paper is the efﬁcient training of the DNN: We propose a network architecture where each hidden rectiﬁed linear unit (ReLU) layer has the same number of nodes as the output layer. This allows a least squares initialization of the network weights of each layer and, using it as starting point for the limited-memory BFGS (L-BFGS) optimizer, yields a quicker convergence to good network weights. Additionally, we noticed that this initialization often results in ﬁnal network weights which have a smaller training error than if we start the training from randomly initialized weights as we ﬁnd better local minima. The remainder of this paper is organized as follows: In Sec. 2 we describe in detail the DNN based instrument extraction where in particular Sec. 2.1 explains the network structure, Sec. 2.2 shows the generation of the training data and Sec. 2.3 details the layer-wise training procedure. In Sec. 3, we give results for two music mixtures, each consisting of three instruments, before we conclude this paper in Sec. 4 where we summarize our work and give an outlook of future steps. The following notation is used throughout this paper: x denotes a column vector and X a matrix where in particular I is the identity matrix. The matrix transpose and Euclidean norm are denoted by (.)Tand ∥.∥, respectively. Furthermore, max (x, y) is the element- wise maximum operation between x and y, and |x| returns a vector with the element-wise magnitude values of x. 2. DNN BASED INSTRUMENT EXTRACTION 2.1. General Network Structure We will explain now the proposed DNN approach for extracting the target instrument s(n) from the mixture x(n), which is also depicted in Fig. 1. The extraction is done in the frequency domain and it consists of the following three steps: (a) Feature vector generation: We use a short-time Fourier trans- form (STFT) with (possibly overlapping) rectangular windows to transform the mixture signal x(n) into the frequency domain. From this frequency representation, we build a feature vector1 x ∈R(2C+1)Lby stacking the magnitude values of the current frame and the C preceding/succeeding frames where L gives the number of magnitude values per frame. The motivation for using also the 2C neighboring frames is to provide the DNN with tem- poral context that allows it to better extract the target instrument. Please note that these context frames are chosen such that they are 1For convenience, we use in the following a simpliﬁed notation and drop the frame index for x, xk, s, ˆx and γ. 2135 978-1-4673-6997-8/15/$31.00 2015 IEEE ICASSP 2015
-Mixture x(n) ... STFT ... Magnitude STFT frames of x(n) DNN input x ∈R(2C+1)L normalized by γ W1, b1 W2, b2    WK, bK DNN with K ReLU layers DNN output ˆs ∈RL rescaled with γ ... Magnitude STFT frames of ˆs(n) ISTFT ... Recovered instrument ˆs(n) Fig. 1: Instrument extraction using a deep neural network non-overlapping2. Finally, the input vector x is normalized by a scalar γ > 0 in order to make it independent of different amplitude levels of the mixture x(n) where γ is the average Euclidean norm of the 2C + 1 magnitude frames in x. (b) DNN instrument extraction: In a second step, the normalized STFT amplitude vector x is fed to a DNN, which consists of K layers with rectiﬁed linear units (ReLU), i.e., we have xk+1 = max (Wkxk + bk, 0) , k = 1, . . . , K (2) where xk denotes the input to the kth layer and in particular x1 is the DNN input x and xK+1 the DNN output ˆs. Each ReLU layer has L nodes and the network weights {Wk, bk}k=1,...,K are trained such that the DNN outputs an estimate ˆs of the magnitude frame s ∈RL of the target instrument from the mixture vector x. We can thus think of the DNN performing a denoising of the “noisy” mixture input. DNNs with ReLU activation functions have shown very good results, see for example [13, 14], and, as each layer has L hidden units, this activation function will allow us to use a layer-wise least squares initialization as will be shown in Sec. 2.3. (c) Reconstruction of the instrument: Using the phase of the original mixture STFT and multiplying each DNN output ˆs with the energy normalization γ that was applied to the corresponding input vector, we obtain an estimate of the STFT of the target instrument s(n), which we convert back into the time domain using an inverse STFT [15]. Note that the DNN outputs ˆs, i.e., the magnitude frames of the target instrument, will be overlapping as shown in Fig. 1 if the STFT in the ﬁrst step (a) was also using overlapping windows. Please refer to [15] for the ISTFT in this case. 2.2. Training Data Generation In order to train the weights {W1, b1}, . . . , {WK, bK} of the DNN, we need a training set {x(p), s(p)}p=1,...,P of P input/target pairs where x(p)∈R(2C+1)Lis a magnitude vector of the mixture with C preceding/succeeding frames and s(p)∈RLthe corre- sponding magnitude vector of the target instrument that we want to extract. In general, there are several possibilities to generate the required material for the DNN training, which differ in the prior knowledge that we have3: For the target instrument s(n), we either only know the instrument type (e.g., piano) or we have recordings from it. For the background instruments vi(n), we either have no knowledge, we know the instrument types that occur in the mixture or we even have 2E.g., if the STFT uses a overlap of 50%, then we only take every second frame to build the feature vector x. 3Beside the discussed cases, there is also the possibility that we have knowledge about the melody of the target instrument, see for example [16]. Instrument Number of ﬁles Material length (b= Variations) Bassoon 18 1.44 hours Cello 6 1.88 hours Clarinet 14 1.15 hours Horn 14 0.82 hours Piano 89 6.12 hours Saxophone 19 1.16 hours Trumpet 16 0.38 hours Viola 13 1.61 hours Violin 12 5.60 hours Table 1: Instrument database recordings of the particular instruments that occur in the mixture. The easiest case is when we have recordings of the instrument that we want to extract and of those that occur as background in the mix- ture. The most difﬁcult case is when we only know the type of the instrument that we want to extract and do not have any knowledge about the background instruments that will appear in the mixture. In this paper, we assume that we know the instrument types of the tar- get and background, e.g., we know that we want to extract a piano from a mixture with a horn and a violin. Using this prior knowl- edge is reasonable since for many songs, we either have metadata which provides information about the instruments that occur or, in case this information is missing, could be provided by the user. As we only know the instrument types that appear in the mixture, we built a musical instrument database, see Table 1 for the details. The music pieces are stored in the free lossless audio codec (FLAC) for- mat with a sampling rate of 48kHz and contain solo performances of the instruments. For each instrument type we have several ﬁles stemming from different musicians with different instruments play- ing classical masterpieces. These variations are important as we only know the instrument types and, hence, the DNN should generalize well to new instruments of the same type. For the DNN training, we ﬁrst load from the instrument database all audio ﬁles of the instruments that occur in the mixture and resam- ple them to a lower DNN system sampling rate, where the sampling rate is chosen such that the computational complexity of the total DNN system is reduced. In a second step, we convert all signals into the frequency domain using a STFT and randomly sample from the target and background instruments P complex-valued STFT vectors n ˜s(1), . . . ,˜s(P )o and n ˜v(1) i , . . . , ˜v(P ) i o with i = 1, . . . , M where ˜s(p)∈C(2C+1)Land ˜v(p) i ∈C(2C+1)L, i.e., they also contain the 2C neighboring frames. These are now combined to form the DNN input/targets, i.e., x(p)= 1 γ(p) α(p)˜s(p) + M X i=1 α(p) i ˜v(p) i , (3a) 2136
-s(p)=α(p) γ(p) S ˜s(p) , (3b) where γ(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in α(p)˜s(p) + PM i=1α(p) i ˜v(p) i and S ∈RL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0 . The scalars α(p), α(p) 1, . . . , α(p) Mdenote the random amplitudes of each instru- ment which stem from a uniform distribution with support [0.01, 1]. The normalization γ(p)is used to yield a DNN input that is inde- pendent of different amplitude levels of the mixture. Please note, however, that each instrument inside the mixture has a different amplitude α(p), α(p) 1, . . . , α(p) M, i.e., the DNN learns to extract the target instrument even if it has a varying amplitude compared to the background instruments. 2.3. DNN Training Using the dataset that we generated as outlined above, we can learn the network weights such that the sum-of-squared errors (SSE) be- tween the P targets s(p)and the DNN outputs ˆs(p)is minimized4. Due to the special network structure and the use of ReLU (cf. Sec. 2.1), we can perform a layer-wise training of the DNN. Each time a new layer is added, we ﬁrst initialize the weights using least squares estimates of Wk and bk by neglecting the nonlinear rectiﬁer function. As the target vectors s(p)are non-negative, we know that the SSE after adding the ReLU activation function can not increase and, hence, using the least-squares solution as initialization results in a good starting point for the L-BFGS solver that we then use. In the following, we will now describe in more details the two steps that we perform if a new layer is added: (a) Weight initialization: For the kth layer, we solve the optimization problem {Winit k, binit k} = arg min Wk,bk P X p=1 s(p) −  Wkx(p) k + bk  2 (4) where x(p) k denotes either the pth DNN input for k = 1 or the output of the (k −1)th layer if k > 1. Using (4), we choose the initial weights of the network such that they are the optimal linear least squares reconstruction of the targets {s(p)}p=1,...,P from the fea- tures {x(p) k}p=1,...,P . As we know that all elements of the target vector s(p)are non-negative, it is obvious that the total error can not increase by adding the ReLU activation function and, therefore, this initialization is a good starting point for the iterative training in step (b). The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k. (b) L-BFGS training: Starting from the initialization (a), we use a L-BFGS training with the SSE cost function to update the complete network, i.e., to update {W1, b1}, . . ., {Wk, bk}. 4We also tested the weighted Euclidean distance [19] as it showed good results for speech enhancement. However, we could not see an improvement and therefore use the SSE cost function in the following. These two steps are done K times in order to result in a network with K ReLU layers. Finally, after adding all layers, we do a ﬁne tuning of the complete network, where we again use L-BFGS. Using this procedure, we train the DNN as a denoising network as each layer, when it is added to the network, tries to recover the original targets s(p)from the output of the previous layer. This is similar to stacked denoising autoencoders, see [20, 21]. In our ex- periments, we have noticed that using the least squares initialization is advantageous with respect to the following two aspects if com- pared to a random initialization: First, it reduces the training time for the network considerably as we start the L-BFGS optimizer from a good initial value and, second, we found that we do not have the problem of converging to poor local minima which was sometimes the case for the random initialization. In the next section, we will show the beneﬁt of using the proposed initialization. 3. SEPARATION RESULTS In the following, we will now give results for the proposed DNN ap- proach. We consider two monaural music mixtures from the TRIOS dataset [22], each composed of three instruments: the “Brahms” trio consisting of a horn, a piano and a violin and the “Lussier” trio with a bassoon, a piano and a trumpet. We use the following settings for our experiments: The DNN system sampling rate (cf. Sec. 2.2) was chosen to be 32kHz which is a compromise between the audio quality of the extracted instru- ment and the DNN training time. For each frame, we have L = 513 magnitude values and we augment the input vector by C = 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN. Hence, one DNN input vector x has a length of (2C + 1)L = 3591 elements and corresponds to 224 milliseconds of the mixture signal. For the training, we use P = 106samples and the gen- erated training material has thus a length of 62.2 hours. During the layerwise training, we use 600 L-BFGS iterations for each new layer and the ﬁnal ﬁne tuning consists of 3000 additional L-BFGS iterations for the complete network such that in total we execute 5  600 + 3000 = 6000 L-BFGS iterations. Table 2 shows the BSS Eval values [23], i.e., the signal-to- distortion ratio (SDR), signal-to-interference ratio (SIR) and signal- to-artifact ratio (SAR) values after the addition of each ReLU layer. Besides the raw DNN outputs, we also give the BSS Eval values if we use a Wiener ﬁlter to combine the DNN outputs of the three instruments. This additional post-processing step allows an en- hancement of the source separation results since, from the raw DNN outputs, it computes for each instrument a softmask and applies it to the original mixture spectrogram. Looking at the results in Table 2, we can see that there is a noticeable improvement when adding the ﬁrst three layers but the difference becomes smaller for additional layers. For “Brahms”, the best results are obtained after adding all ﬁve layers and performing the ﬁnal ﬁne tuning. This is different for “Lussier”: For the trumpet, we can see that the network is starting to overﬁt to the training set when adding more than three layers as the SDR/SIR values start to decrease. The problem is the limited amount of material for the trumpet (22.5 minutes of solo performances, see Table 1), which is too small. Interestingly, also the DNNs for the other two instruments start to overﬁt which is probably also due to the trumpet in the mixture. From the results we can conclude that having sufﬁcient material for each instrument is vital if only the instrument type is known since only this ensures a good source separation quality and avoids overﬁtting. Table 3 shows for comparison the BSS Eval results for three unsupervised NMF based source separation approaches: • “MFCC kmeans [17]”: This approach uses a Mel ﬁlter bank of size 30 which is applied to the frequency basis vectors of the NMF decomposition in order to compute MFCCs. These are 2137
-Instrument Output After 1st layer After 2nd layer After 3rd layer After 4th layer After 5th layer After ﬁne tuning SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn Raw output 3.30 4.79 9.93 5.15 8.19 8.73 5.29 8.50 8.69 5.38 8.66 8.69 5.53 9.19 8.47 5.70 9.57 8.44 WF output 4.05 5.63 10.25 6.36 10.20 9.08 6.51 10.81 8.87 6.58 10.99 8.87 6.71 11.44 8.79 6.80 11.68 8.79 Piano Raw output 0.85 1.93 9.58 2.34 4.37 7.97 3.16 6.60 6.64 3.26 6.61 6.82 3.34 6.86 6.71 3.47 7.34 6.51 WF output 2.62 4.54 8.41 4.13 7.53 7.49 4.36 9.07 6.66 4.40 9.13 6.67 4.47 9.41 6.62 4.68 10.13 6.54 Violin Raw output −0.23 1.88 6.11 3.06 9.52 4.63 3.49 9.21 5.33 3.50 9.23 5.34 3.57 9.44 5.33 3.90 10.34 5.41 WF output 3.62 8.57 5.86 5.27 14.10 6.05 6.04 15.19 6.74 6.08 15.30 6.76 6.02 15.36 6.68 6.11 15.60 6.75 Lussier Bassoon Raw output 3.05 5.48 7.82 3.47 6.51 7.32 3.62 7.00 7.07 3.68 7.14 7.04 3.72 7.31 6.96 3.39 7.08 6.60 WF output 4.38 7.55 7.94 4.40 9.38 6.53 4.36 9.71 6.30 4.42 9.75 6.36 4.34 9.75 6.26 3.92 9.37 5.85 Piano Raw output 1.57 3.30 8.08 1.69 4.06 6.90 1.87 4.21 7.08 1.94 4.31 7.06 1.93 4.38 6.92 1.97 4.65 6.61 WF output 3.12 6.07 7.14 3.33 6.60 6.95 3.23 6.44 6.94 3.32 6.64 6.89 3.27 6.69 6.75 2.99 6.64 6.29 Trumpet Raw output 5.01 9.37 7.47 6.28 11.26 8.25 6.61 11.67 8.51 6.56 11.54 8.52 6.55 11.57 8.49 6.38 11.49 8.27 WF output 6.00 10.18 8.49 7.14 12.86 8.71 7.38 13.55 8.77 7.23 13.43 8.62 7.22 13.49 8.58 7.23 13.54 8.57 Table 2: BSS Eval results for DNN instrument extraction (“Brahms” and “Lussier” trio, all values are given in dB) Instrument MFCC kmeans [17] Mel NMF [17] Shifted-NMF [18] DNN with WF SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn 3.87 5.76 9.41 4.17 5.83 10.17 2.95 3.34 15.20 6.80 11.68 8.79 Piano 3.30 4.42 10.76 −0.10 0.21 14.39 3.78 5.59 9.50 4.68 10.13 6.54 Violin −8.35 −7.89 10.21 9.69 19.79 10.19 7.66 10.96 10.74 6.11 15.60 6.75 Average −0.39 0.76 10.13 4.59 8.61 11.58 4.80 6.63 11.81 5.86 12.47 7.36 Lussier Bassoon 1.85 11.67 2.61 0.15 0.75 11.72 −0.83 −0.60 15.43 3.92 9.37 5.85 Piano 4.66 6.28 10.64 4.56 8.00 7.83 2.54 5.14 7.16 2.99 6.64 6.29 Trumpet −1.73 −1.29 12.18 8.46 18.12 9.05 6.57 7.39 14.95 7.23 13.54 8.57 Average 1.59 5.55 8.48 4.39 8.96 9.53 2.76 3.98 12.51 4.71 9.85 6.90 Table 3: Comparison of BSS Eval results (all values are given in dB) then clustered via kmeans. For the Mel ﬁlter bank, we use the implementation [24] of [25]. • “Mel NMF [17]”: This approach also applies a Mel ﬁlter bank of size 30 to the original frequency basis vectors and uses a sec- ond NMF to perform the clustering. • “Shifted-NMF [18]”: For this approach, we use a constant Q transform matrix with minimal frequency 55 Hz and 24 fre- quency bins per octave. The shifted-NMF decomposition is al- lowed to use a maximum of 24 shifts. The constant Q transform source code was kindly provided by D. FitzGerald and we use the Tensor toolbox [26,27] for the shifted-NMF implementation. The best SDR values in Table 3 are emphasized in bold face and we can observe that, although our DNN approach not always gives the best individual SDR per instrument, it has the best average SDR for both mixtures since it is capable of extracting three sources with similar quality. This is not the case for the NMF approaches which have one instrument with a low SIR value, i.e., one instrument that is not well separated from the others.5 In order to see the beneﬁt of the least squares initialization from Sec. 2.3 we show in Fig. 2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec. 2.2. The denominator of J gives the SSE of a baseline system where the DNN is perform- ing an identity transform. From Fig. 2 we can see that the error is signiﬁcantly decreased whenever a new layer is added as the error J exhibits downward “jumps”. These “jumps” are due to the least squares initialization of the network weights. For example, consider the training error in Fig. 2 of the network that extracts the piano: When the ﬁrst layer is added, we have an initial error of J = 0.23, which means that, using the least squares initialization from Sec. 2.3, we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1 = 0. Would we have used the 5Please note that the considered NMF approaches are only assuming to know the number of sources, i.e., they use less prior knowledge than our DNN approach. We also tried the supervised NMF approach from [28] where the frequency basis vectors are pre-trained on our instrument database. How- ever, this supervised NMF approach resulted in signiﬁcant worse SDR values as the learned frequency bases for the instruments are correlated which intro- duces interference. 600 1200 1800 2400 3000 6000 0.08 0.1 0.12 0.14 0.16 0.18 0.2 0.22 Number of L−BFGS iterations Normalized training error J 2nd layer added 3rd layer added 4th layer added 5th layer added Start fine tuning Piano Horn Violin Fig. 2: Evolution of training error for “Brahms” baseline initialization, then a simulation showed that it would have taken us 980 additional L-BFGS iterations to reach the error value of the least squares initialization. These L-BFGS iterations can be saved and, therefore, we converge much faster to a network with a good instrument extraction performance. 4. CONCLUSIONS AND FUTURE WORK In this paper, we used a deep neural network for the extraction of an instrument from music. Using only the knowledge of the instrument types, we generated the training data from a database with solo in- strument performances and the network is trained layer-wise with a least-squares initialization of the weights. During our experiments, we noticed that the material length and quality of the solo performances is important as only sufﬁcient ma- terial allows the neural network to generalize to new, i.e., before unseen, instruments. We therefore plan to incorporate the “RWC Music Instrument Sounds” database [29] as it contains high quality samples from many instruments. Furthermore, our data generation process in Sec. 2.2 currently does not exploit music theory when generating the mixtures and we think that, taking such knowledge into account, should generate training data that is better suited for the instrument extraction task. 2138
-5. REFERENCES [1] P. Comon and C. Jutten, Eds., Handbook of Blind Source Sep- aration: Independent Component Analysis and Applications, Academic Press, 2010. [2] G. R. Naik and W. Wang, Eds., Blind Source Separation: Advances in Theory, Algorithms and Applications, Springer, 2014. [3] Z. Raﬁi and B. Pardo, “Repeating pattern extraction technique (REPET): A simple method for music/voice separation,” IEEE Transactions on Audio, Speech, and Language Processing, vol. 21, no. 1, pp. 73–84, 2013. [4] J.-L. Durrieu, B. David, and G. Richard, “A musically moti- vated mid-level representation for pitch estimation and musical audio source separation,” IEEE Journal on Selected Topics on Signal Processing, vol. 5, pp. 1180–1191, 2011. [5] D. FitzGerald, “Upmixing from mono - a source separation ap- proach,” Proc. 17th International Conference on Digital Signal Processing, 2011. [6] D. FitzGerald, “The good vibrations problem,” 134th AES Convention, e-brief, 2013. [7] A. Krizhevsky, I. Sutskever, and G. E. Hinton, “Imagenet clas- siﬁcation with deep convolutional neural networks,” in Ad- vances in neural information processing systems, 2012, pp. 1097–1105. [8] C. Farabet, C. Couprie, L. Najman, and Y. LeCun, “Learning hierarchical features for scene labeling,” IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 35, no. 8, pp. 1915–1929, 2013. [9] G. Hinton, L. Deng, D. Yu, G. E. Dahl, A.-R. Mohamed, N. Jaitly, A. Senior, V. Vanhoucke, P. Nguyen, T. N. Sainath, et al., “Deep neural networks for acoustic modeling in speech recognition: The shared views of four research groups,” IEEE Signal Processing Magazine, vol. 29, no. 6, pp. 82–97, 2012. [10] E. M. Grais, M. U. Sen, and H. Erdogan, “Deep neu- ral networks for single channel source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Process- ing (ICASSP), pp. 3734–3738, 2014. [11] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Deep learning for monaural speech sepa- ration,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 1562–1566, 2014. [12] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Singing-voice separation from monaural recordings using deep recurrent neural networks,” Interna- tional Society for Music Information Retrieval Conference (ISMIR), 2014. [13] X. Glorot, A. Bordes, and Y. Bengio, “Deep sparse rectiﬁer networks,” Proceedings of the 14th International Conference on Artiﬁcial Intelligence and Statistics, vol. 15, pp. 315–323, 2011. [14] M. D. Zeiler, M. Ranzato, R. Monga, M. Mao, K. Yang, Q. V. Le, P. Nguyen, A. Senior, V. Vanhoucke, J. Dean, et al., “On rectiﬁed linear units for speech processing,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 3517–3521, 2013. [15] B. Yang, “A study of inverse short-time Fourier transform,” Proc. IEEE Conference on Acoustics, Speech, and Signal Pro- cessing (ICASSP), pp. 3541–3544, 2008. [16] P. Smaragdis and G. J. Mysore, “Separation by “humming”: User-guided sound extraction from monophonic mixtures,” IEEE Workshop on Applications of Signal Processing to Au- dio and Acoustics, pp. 69–72, 2009. [17] M. Spiertz and V. Gnann, “Source-ﬁlter based clustering for monaural blind source separation,” Proc. Int. Conference on Digital Audio Effects, 2009. [18] R. Jaiswal, D. FitzGerald, D. Barry, E. Coyle, and S. Rickard, “Clustering NMF basis functions using shifted NMF for monaural sound source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 245– 248, 2011. [19] P. C. Loizou, “Speech enhancement based on perceptually mo- tivated Bayesian estimators of the magnitude spectrum,” IEEE Transactions on Speech and Audio Processing, vol. 13, no. 5, pp. 857–869, 2005. [20] P. Vincent, H. Larochelle, Y. Bengio, and P.-A. Manzagol, “Ex- tracting and composing robust features with denoising autoen- coders,” Proceedings of the International Conference on Ma- chine Learning, pp. 1096–1103, 2008. [21] M. Chen, Z. Xu, K. Weinberger, and F. Sha, “Marginalized denoising autoencoders for domain adaptation,” Proceedings of the International Conference on Machine Learning, 2012. [22] J. Fritsch, “High quality musical audio source separation,” Master’s Thesis, UPMC / IRCAM / Telecom ParisTech, 2012. [23] E. Vincent, R. Gribonval, and C. Fevotte, “Performance mea- surement in blind audio source separation,” IEEE Transactions on Audio, Speech and Language Processing, vol. 14, no. 4, pp. 1462–1469, 2006. [24] P. Brady, “Matlab Mel ﬁlter implementation,” http://www.mathworks.com/matlabcentral/ fileexchange/23179-melfilter, 2014, [Online]. [25] F. Zheng, G. Zhang, and Z. Song, “Comparison of different implementations of MFCC,” Journal of Computer Science and Technology, vol. 16, no. 6, pp. 582–589, September 2001. [26] B. W. Bader and T. G. Kolda, “MATLAB tensor toolbox version 2.5,” http://www.sandia.gov/˜tgkolda/ TensorToolbox/, January 2012, [Online]. [27] B. W. Bader and T. G. Kolda, “Algorithm 862: MATLAB ten- sor classes for fast algorithm prototyping,” ACM Transactions on Mathematical Software, vol. 32, no. 4, pp. 635–653, De- cember 2006. [28] E. M. Grais and H. Erdogan, “Single channel speech music separation using nonnegative matrix factorization and spectral mask,” Digital Signal Processing (DSP), 2011 17th Interna- tional Conference on IEEE, pp. 1–6, 2011. [29] M. Goto, H. Hashiguchi, T. Nishimura, and R. Oka, “RWC Music Database: Music Genre Database and Musical Instru- ment Sound Database,” Proc. of the International Conference on Music Information Retrieval (ISMIR), pp. 229–230, 2003. 2139 View publication stats
-
-## Images
-
-### Image 1
-**Description:** small rectangular grayscale image (64x64)
-![Image 1](page_1_img_1_0f58f9aa.png)
-**Dimensions:** 64x64
-
-### Image 2
-**Description:** small rectangular color image (64x64)
-![Image 2](page_1_img_2_87e4f64c.png)
-**Dimensions:** 64x64
-
-### Image 3
-**Description:** small rectangular color image (64x64)
-![Image 3](page_1_img_3_1be6f0da.png)
-**Dimensions:** 64x64
-
-
-## Tables
-
-### Table 1
-| See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper · April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS READS 138 4,160 3 authors: Stefan Uhlich Franck Giron University of Stuttgart Sony Europe B.V., Zwg. Deutschland 67 PUBLICATIONS 1,229 CITATIONS 8 PUBLICATIONS 380 CITATIONS SEE PROFILE SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175 PUBLICATIONS 2,294 CITATIONS SEE PROFILE |  |
-| --- | --- |
-| All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file. |  |
-
-### Table 2
-| Instrument | Numberoffiles (=bVariations) | Materiallength |
-| --- | --- | --- |
-| Bassoon Cello Clarinet Horn Piano Saxophone Trumpet Viola Violin | 18 6 14 14 89 19 16 13 12 | 1.44hours 1.88hours 1.15hours 0.82hours 6.12hours 1.16hours 0.38hours 1.61hours 5.60hours |
-
-### Table 3
-| Instrument Output | After1stlayer SDR SIR SAR | After2ndlayer SDR SIR SAR | After3rdlayer SDR SIR SAR | After4thlayer SDR SIR SAR | After5thlayer SDR SIR SAR | Afterfinetuning SDR SIR SAR |
-| --- | --- | --- | --- | --- | --- | --- |
-| Rawoutput Horn WFoutput smharB Rawoutput Piano WFoutput Rawoutput Violin WFoutput | 3.30 4.79 9.93 4.05 5.63 10.25 | 5.15 8.19 8.73 6.36 10.20 9.08 | 5.29 8.50 8.69 6.51 10.81 8.87 | 5.38 8.66 8.69 6.58 10.99 8.87 | 5.53 9.19 8.47 6.71 11.44 8.79 | 5.70 9.57 8.44 6.80 11.68 8.79 |
-|  | 0.85 1.93 9.58 2.62 4.54 8.41 | 2.34 4.37 7.97 4.13 7.53 7.49 | 3.16 6.60 6.64 4.36 9.07 6.66 | 3.26 6.61 6.82 4.40 9.13 6.67 | 3.34 6.86 6.71 4.47 9.41 6.62 | 3.47 7.34 6.51 4.68 10.13 6.54 |
-|  | −0.23 1.88 6.11 3.62 8.57 5.86 | 3.06 9.52 4.63 5.27 14.10 6.05 | 3.49 9.21 5.33 6.04 15.19 6.74 | 3.50 9.23 5.34 6.08 15.30 6.76 | 3.57 9.44 5.33 6.02 15.36 6.68 | 3.90 10.34 5.41 6.11 15.60 6.75 |
-| Rawoutput Bassoon WFoutput reissuL Rawoutput Piano WFoutput Rawoutput Trumpet WFoutput | 3.05 5.48 7.82 4.38 7.55 7.94 | 3.47 6.51 7.32 4.40 9.38 6.53 | 3.62 7.00 7.07 4.36 9.71 6.30 | 3.68 7.14 7.04 4.42 9.75 6.36 | 3.72 7.31 6.96 4.34 9.75 6.26 | 3.39 7.08 6.60 3.92 9.37 5.85 |
-|  | 1.57 3.30 8.08 3.12 6.07 7.14 | 1.69 4.06 6.90 3.33 6.60 6.95 | 1.87 4.21 7.08 3.23 6.44 6.94 | 1.94 4.31 7.06 3.32 6.64 6.89 | 1.93 4.38 6.92 3.27 6.69 6.75 | 1.97 4.65 6.61 2.99 6.64 6.29 |
-|  | 5.01 9.37 7.47 6.00 10.18 8.49 | 6.28 11.26 8.25 7.14 12.86 8.71 | 6.61 11.67 8.51 7.38 13.55 8.77 | 6.56 11.54 8.52 7.23 13.43 8.62 | 6.55 11.57 8.49 7.22 13.49 8.58 | 6.38 11.49 8.27 7.23 13.54 8.57 |
-
-### Table 4
-| Instrument | MFCCkmeans[17] SDR SIR SAR | MelNMF[17] SDR SIR SAR | Shifted-NMF[18] SDR SIR SAR | DNNwithWF SDR SIR SAR |
-| --- | --- | --- | --- | --- |
-| Horn smharB Piano Violin Average | 3.87 5.76 9.41 3.30 4.42 10.76 −8.35 −7.89 10.21 | 4.17 5.83 10.17 −0.10 0.21 14.39 9.69 19.79 10.19 | 2.95 3.34 15.20 3.78 5.59 9.50 7.66 10.96 10.74 | 6.80 11.68 8.79 4.68 10.13 6.54 6.11 15.60 6.75 |
-|  | −0.39 0.76 10.13 | 4.59 8.61 11.58 | 4.80 6.63 11.81 | 5.86 12.47 7.36 |
-| Bassoon reissuL Piano Trumpet Average | 1.85 11.67 2.61 4.66 6.28 10.64 −1.73 −1.29 12.18 | 0.15 0.75 11.72 4.56 8.00 7.83 8.46 18.12 9.05 | −0.83 −0.60 15.43 2.54 5.14 7.16 6.57 7.39 14.95 | 3.92 9.37 5.85 2.99 6.64 6.29 7.23 13.54 8.57 |
-|  | 1.59 5.55 8.48 | 4.39 8.96 9.53 | 2.76 3.98 12.51 | 4.71 9.85 6.90 |
-
-### Table 5
-|  |  |  |  |  | dedda r |  |  | dedda r |  |  | dedda r |  |  | gninut e |  | Piano Horn Violin |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-|  |  |  |  | dr | eyal |  | ht | eyal |  | ht | eyal |  |  | nif trat |  |  |
-|  |  |  |  |  | 3 |  |  | 4 |  |  | 5 |  |  | S |  |  |
-|  |  | d |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  | edda |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | d | reyal |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-
-
-## Mathematical Formulas
-
-### Formula 1
-```latex
-i=1 vi(n)
-```
-
-### Formula 2
-```latex
-\frac{8}{15}
-```
-
-### Formula 3
-```latex
-= s(n) + M X i
-```
-
-### Formula 4
-```latex
-=1 vi(n)
-```
-
-### Formula 5
-```latex
-2135 978-1-4673-6997-\frac{8}{15}/$31.00 2015 IEEE ICASSP 2015
-```
-
-### Formula 6
-```latex
-k = 1
-```
-
-### Formula 7
-```latex
-k=1
-```
-
-### Formula 8
-```latex
-p=1
-```
-
-### Formula 9
-```latex
-b= Variations) Bassoon 18 1
-```
-
-### Formula 10
-```latex
-i = 1
-```
-
-### Formula 11
-```latex
-i=1
-```
-
-### Formula 12
-```latex
-> 0 in order to make it independent of different amplitude levels of the mixture x(n) where
-```
-
-### Formula 13
-```latex
-1 = max (Wkxk + bk
-```
-
-### Formula 14
-```latex
-i o with i = 1
-```
-
-### Formula 15
-```latex
-= 1
-```
-
-### Formula 16
-```latex
-M X i=1
-```
-
-### Formula 17
-```latex
-Mixture x(n) ..
-```
-
-### Formula 18
-```latex
-,˜s(P )o and n ˜v(1) i ,
-```
-
-### Formula 19
-```latex
-, ˜v(P ) i o with i = 1,
-```
-
-### Formula 20
-```latex
-, M where ˜s(p)\inC(2C+1)Land ˜v(p) i \inC(2C+1)L, i.e., they also contain the 2C neighboring frames
-```
-
-### Formula 21
-```latex
-These are now combined to form the DNN input/targets, i.e., x(p)= 1 \gamma(p) \alpha(p)˜s(p) + M X i=1 \alpha(p) i ˜v(p) i , (3a) 2136
-```
-
-### Formula 22
-```latex
-i=1
-```
-
-### Formula 23
-```latex
-S = 0    0 I 0    0
-```
-
-### Formula 24
-```latex
-p=1 s(p)
-```
-
-### Formula 25
-```latex
-k = 1 or the output of the (k
-```
-
-### Formula 26
-```latex
-p=1
-```
-
-### Formula 27
-```latex
-k = CsxC
-```
-
-### Formula 28
-```latex
-k= s
-```
-
-### Formula 29
-```latex
-x = P X p
-```
-
-### Formula 30
-```latex
-s =1 P PP p
-```
-
-### Formula 31
-```latex
-k = 1 P PP p
-```
-
-### Formula 32
-```latex
-L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 33
-```latex
-L = 3591 elements and corresponds to 224 milliseconds of the mixture signal
-```
-
-### Formula 34
-```latex
-P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 35
-```latex
-> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in
-```
-
-### Formula 36
-```latex
-PM i=1
-```
-
-### Formula 37
-```latex
-= arg min Wk
-```
-
-### Formula 38
-```latex
-bk P X p=1 s(p)
-```
-
-### Formula 39
-```latex
-k denotes either the pth DNN input for k = 1 or the output of the (k
-```
-
-### Formula 40
-```latex
-form and the solution is given by Winit k = CsxC
-```
-
-### Formula 41
-```latex
-binit k= s
-```
-
-### Formula 42
-```latex
-with Csx = P X p
-```
-
-### Formula 43
-```latex
-=1  s(p)
-```
-
-### Formula 44
-```latex
-Cxx = P X p
-```
-
-### Formula 45
-```latex
-=1  x(p) k
-```
-
-### Formula 46
-```latex
-and s =1 P PP p
-```
-
-### Formula 47
-```latex
-=1s(p)
-```
-
-### Formula 48
-```latex
-xk = 1 P PP p
-```
-
-### Formula 49
-```latex
-=1x(p) k
-```
-
-### Formula 50
-```latex
-we have L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 51
-```latex
-= 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN
-```
-
-### Formula 52
-```latex
-we use P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 53
-```latex
-3000 = 6000 L-BFGS iterations
-```
-
-### Formula 54
-```latex
-s(p)=\alpha(p) \gamma(p) S ˜s(p) , (3b) where \gamma(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in \alpha(p)˜s(p) + PM i=1\alpha(p) i ˜v(p) i and S \inRL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0
-```
-
-### Formula 55
-```latex
-The scalars \alpha(p), \alpha(p) 1,
-```
-
-### Formula 56
-```latex
-The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k
-```
-
-### Formula 57
-```latex
-., {Wk, bk}
-```
-
-### Formula 58
-```latex
-J = (PP p
-```
-
-### Formula 59
-```latex
-p=1
-```
-
-### Formula 60
-```latex
-J = 0
-```
-
-### Formula 61
-```latex
-2 the evolution of the normalized DNN training error J = (PP p
-```
-
-### Formula 62
-```latex
-=1
-```
-
-### Formula 63
-```latex
-PP p=1
-```
-
-### Formula 64
-```latex
-we have an initial error of J = 0
-```
-
-### Formula 65
-```latex
-we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1
-```
-
-### Formula 66
-```latex
-= 0
-```
-
-### Formula 67
-```latex
-2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec
-```
-
-### Formula 68
-```latex
-REFERENCES [1] P
-```
-
-### Formula 69
-```latex
-[2] G
-```
-
-### Formula 70
-```latex
-[3] Z
-```
-
-### Formula 71
-```latex
-[4] J.-L
-```
-
-### Formula 72
-```latex
-[5] D
-```
-
-### Formula 73
-```latex
-[6] D
-```
-
-### Formula 74
-```latex
-[7] A
-```
-
-### Formula 75
-```latex
-[8] C
-```
-
-### Formula 76
-```latex
-[9] G
-```
-
-### Formula 77
-```latex
-[10] E
-```
-
-### Formula 78
-```latex
-[11] P.-S
-```
-
-### Formula 79
-```latex
-[12] P.-S
-```
-
-### Formula 80
-```latex
-[13] X
-```
-
-### Formula 81
-```latex
-[14] M
-```
-
-### Formula 82
-```latex
-[15] B
-```
-
-### Formula 83
-```latex
-[16] P
-```
-
-### Formula 84
-```latex
-[17] M
-```
-
-### Formula 85
-```latex
-[18] R
-```
-
-### Formula 86
-```latex
-[19] P
-```
-
-### Formula 87
-```latex
-[20] P
-```
-
-### Formula 88
-```latex
-[21] M
-```
-
-### Formula 89
-```latex
-[22] J
-```
-
-### Formula 90
-```latex
-[23] E
-```
-
-### Formula 91
-```latex
-[24] P
-```
-
-### Formula 92
-```latex
-[25] F
-```
-
-### Formula 93
-```latex
-[26] B
-```
-
-### Formula 94
-```latex
-[27] B
-```
-
-### Formula 95
-```latex
-[28] E
-```
-
-### Formula 96
-```latex
-[29] M
-```
-
-
-## Forms and Fields
-
-### Form 1
-
-### Form 2
-
-### Form 3
-
-### Form 4
-
-### Form 5
-
-
-
-
-
-## Appendices
-
-# test_document
-*Converted from PDF using PPARSER*
-
-## Table of Contents
-- [Content](#content)
-- [Images](#images)
-- [Tables](#tables)
-- [Formulas](#formulas)
-- [Forms](#forms)
-
-## Content
-See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper  April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS 138 READS 4,160 3 authors: Stefan Uhlich University of Stuttgart 67PUBLICATIONS1,229CITATIONS SEE PROFILE Franck Giron Sony Europe B.V., Zwg. Deutschland 8PUBLICATIONS380CITATIONS SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175PUBLICATIONS2,294CITATIONS SEE PROFILE All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file.
-DEEP NEURAL NETWORK BASED INSTRUMENT EXTRACTION FROM MUSIC Stefan Uhlich1, Franck Giron1and Yuki Mitsufuji2 1 Sony European Technology Center (EuTEC), Stuttgart, Germany 2 Sony Corporation, Audio Technology Development Department, Tokyo, Japan ABSTRACT This paper deals with the extraction of an instrument from music by using a deep neural network. As prior information, we only as- sume to know the instrument types that are present in the mixture and, using this information, we generate the training data from a database with solo instrument performances. The neural network is built up from rectiﬁed linear units where each hidden layer has the same number of nodes as the output layer. This allows a least squares initialization of the layer weights and speeds up the training of the network considerably compared to a traditional random initializa- tion. We give results for two mixtures, each consisting of three in- struments, and evaluate the extraction performance using BSS Eval for a varying number of hidden layers. Index Terms— Deep neural network (DNN), Instrument extrac- tion, Blind source separation (BSS) 1. INTRODUCTION In this paper, we study the extraction of a target instrument s(n) ∈R from an instantaneous, monaural music mixture x(n) ∈R, i.e., of a mixture that can be written as x(n) = s(n) + M X i=1 vi(n), (1) where vi(n) is the time signal of the ith background instrument and the mixture consists thus in a total of M +1 instruments. From x(n) we want to extract an estimate ˆs(n) of the target instrument s(n) and, therefore, we can see instrument extraction as a special case of the general blind source separation (BSS) problem [1, 2]. Various applications require such an estimate ˆs(n) ranging from Karaoke systems which use a separation into a instruments and a vocal track, see [3, 4], to upmixing where one tries to obtain a multi-channel version of the monaural mixture x(n), see [5,6]. We propose a deep neural network (DNN) for the extraction of the target instrument s(n) from x(n) as DNNs have proved to work very well in various applications and have gained a lot of interest in the last years, especially for classiﬁcation tasks in image process- ing [7, 8] and for speech recognition [9]. We use the DNN in the frequency domain to estimate a target instrument from the mixture, i.e., we train the network such that we can think of it as a “denoiser” which converts the “noisy” mixture spectrogram to the “clean” in- strument spectrogram. For the training of the network, we only as- sume to know the instrument types of the target instrument s(n) and of the other background instruments v1(n), . . . , vM(n), for exam- ple that we want to extract a piano from a mixture with a violin and a horn. This is in contrast to other proposed DNN approaches for BSS of music which are supervised in the sense that they assume to have more knowledge about the signals [10–12]. Huang et. al. used in [11, 12] a deep (recurrent) neural network for the separa- tion of two sources where the neural network is extended by a ﬁnal softmask layer to extract the source estimates and it is trained using a discriminative cost function that also tries to decrease the interfer- ence by other sources. Whereas they only know the type of the target instrument (in their case: singing voice) in [12], they assume that the background is one of 110 known karaoke songs. In contrast, we only know the instrument types that appear in the mixture and, hence, we have to use a large instrument database with solo performances from various musicians and instruments. From this database, we generate the training data that allows us to generalize to new mixtures and this instrument database with the training data generation is thus a integral part of our DNN architecture. A second contribution of the paper is the efﬁcient training of the DNN: We propose a network architecture where each hidden rectiﬁed linear unit (ReLU) layer has the same number of nodes as the output layer. This allows a least squares initialization of the network weights of each layer and, using it as starting point for the limited-memory BFGS (L-BFGS) optimizer, yields a quicker convergence to good network weights. Additionally, we noticed that this initialization often results in ﬁnal network weights which have a smaller training error than if we start the training from randomly initialized weights as we ﬁnd better local minima. The remainder of this paper is organized as follows: In Sec. 2 we describe in detail the DNN based instrument extraction where in particular Sec. 2.1 explains the network structure, Sec. 2.2 shows the generation of the training data and Sec. 2.3 details the layer-wise training procedure. In Sec. 3, we give results for two music mixtures, each consisting of three instruments, before we conclude this paper in Sec. 4 where we summarize our work and give an outlook of future steps. The following notation is used throughout this paper: x denotes a column vector and X a matrix where in particular I is the identity matrix. The matrix transpose and Euclidean norm are denoted by (.)Tand ∥.∥, respectively. Furthermore, max (x, y) is the element- wise maximum operation between x and y, and |x| returns a vector with the element-wise magnitude values of x. 2. DNN BASED INSTRUMENT EXTRACTION 2.1. General Network Structure We will explain now the proposed DNN approach for extracting the target instrument s(n) from the mixture x(n), which is also depicted in Fig. 1. The extraction is done in the frequency domain and it consists of the following three steps: (a) Feature vector generation: We use a short-time Fourier trans- form (STFT) with (possibly overlapping) rectangular windows to transform the mixture signal x(n) into the frequency domain. From this frequency representation, we build a feature vector1 x ∈R(2C+1)Lby stacking the magnitude values of the current frame and the C preceding/succeeding frames where L gives the number of magnitude values per frame. The motivation for using also the 2C neighboring frames is to provide the DNN with tem- poral context that allows it to better extract the target instrument. Please note that these context frames are chosen such that they are 1For convenience, we use in the following a simpliﬁed notation and drop the frame index for x, xk, s, ˆx and γ. 2135 978-1-4673-6997-8/15/$31.00 2015 IEEE ICASSP 2015
-Mixture x(n) ... STFT ... Magnitude STFT frames of x(n) DNN input x ∈R(2C+1)L normalized by γ W1, b1 W2, b2    WK, bK DNN with K ReLU layers DNN output ˆs ∈RL rescaled with γ ... Magnitude STFT frames of ˆs(n) ISTFT ... Recovered instrument ˆs(n) Fig. 1: Instrument extraction using a deep neural network non-overlapping2. Finally, the input vector x is normalized by a scalar γ > 0 in order to make it independent of different amplitude levels of the mixture x(n) where γ is the average Euclidean norm of the 2C + 1 magnitude frames in x. (b) DNN instrument extraction: In a second step, the normalized STFT amplitude vector x is fed to a DNN, which consists of K layers with rectiﬁed linear units (ReLU), i.e., we have xk+1 = max (Wkxk + bk, 0) , k = 1, . . . , K (2) where xk denotes the input to the kth layer and in particular x1 is the DNN input x and xK+1 the DNN output ˆs. Each ReLU layer has L nodes and the network weights {Wk, bk}k=1,...,K are trained such that the DNN outputs an estimate ˆs of the magnitude frame s ∈RL of the target instrument from the mixture vector x. We can thus think of the DNN performing a denoising of the “noisy” mixture input. DNNs with ReLU activation functions have shown very good results, see for example [13, 14], and, as each layer has L hidden units, this activation function will allow us to use a layer-wise least squares initialization as will be shown in Sec. 2.3. (c) Reconstruction of the instrument: Using the phase of the original mixture STFT and multiplying each DNN output ˆs with the energy normalization γ that was applied to the corresponding input vector, we obtain an estimate of the STFT of the target instrument s(n), which we convert back into the time domain using an inverse STFT [15]. Note that the DNN outputs ˆs, i.e., the magnitude frames of the target instrument, will be overlapping as shown in Fig. 1 if the STFT in the ﬁrst step (a) was also using overlapping windows. Please refer to [15] for the ISTFT in this case. 2.2. Training Data Generation In order to train the weights {W1, b1}, . . . , {WK, bK} of the DNN, we need a training set {x(p), s(p)}p=1,...,P of P input/target pairs where x(p)∈R(2C+1)Lis a magnitude vector of the mixture with C preceding/succeeding frames and s(p)∈RLthe corre- sponding magnitude vector of the target instrument that we want to extract. In general, there are several possibilities to generate the required material for the DNN training, which differ in the prior knowledge that we have3: For the target instrument s(n), we either only know the instrument type (e.g., piano) or we have recordings from it. For the background instruments vi(n), we either have no knowledge, we know the instrument types that occur in the mixture or we even have 2E.g., if the STFT uses a overlap of 50%, then we only take every second frame to build the feature vector x. 3Beside the discussed cases, there is also the possibility that we have knowledge about the melody of the target instrument, see for example [16]. Instrument Number of ﬁles Material length (b= Variations) Bassoon 18 1.44 hours Cello 6 1.88 hours Clarinet 14 1.15 hours Horn 14 0.82 hours Piano 89 6.12 hours Saxophone 19 1.16 hours Trumpet 16 0.38 hours Viola 13 1.61 hours Violin 12 5.60 hours Table 1: Instrument database recordings of the particular instruments that occur in the mixture. The easiest case is when we have recordings of the instrument that we want to extract and of those that occur as background in the mix- ture. The most difﬁcult case is when we only know the type of the instrument that we want to extract and do not have any knowledge about the background instruments that will appear in the mixture. In this paper, we assume that we know the instrument types of the tar- get and background, e.g., we know that we want to extract a piano from a mixture with a horn and a violin. Using this prior knowl- edge is reasonable since for many songs, we either have metadata which provides information about the instruments that occur or, in case this information is missing, could be provided by the user. As we only know the instrument types that appear in the mixture, we built a musical instrument database, see Table 1 for the details. The music pieces are stored in the free lossless audio codec (FLAC) for- mat with a sampling rate of 48kHz and contain solo performances of the instruments. For each instrument type we have several ﬁles stemming from different musicians with different instruments play- ing classical masterpieces. These variations are important as we only know the instrument types and, hence, the DNN should generalize well to new instruments of the same type. For the DNN training, we ﬁrst load from the instrument database all audio ﬁles of the instruments that occur in the mixture and resam- ple them to a lower DNN system sampling rate, where the sampling rate is chosen such that the computational complexity of the total DNN system is reduced. In a second step, we convert all signals into the frequency domain using a STFT and randomly sample from the target and background instruments P complex-valued STFT vectors n ˜s(1), . . . ,˜s(P )o and n ˜v(1) i , . . . , ˜v(P ) i o with i = 1, . . . , M where ˜s(p)∈C(2C+1)Land ˜v(p) i ∈C(2C+1)L, i.e., they also contain the 2C neighboring frames. These are now combined to form the DNN input/targets, i.e., x(p)= 1 γ(p) α(p)˜s(p) + M X i=1 α(p) i ˜v(p) i , (3a) 2136
-s(p)=α(p) γ(p) S ˜s(p) , (3b) where γ(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in α(p)˜s(p) + PM i=1α(p) i ˜v(p) i and S ∈RL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0 . The scalars α(p), α(p) 1, . . . , α(p) Mdenote the random amplitudes of each instru- ment which stem from a uniform distribution with support [0.01, 1]. The normalization γ(p)is used to yield a DNN input that is inde- pendent of different amplitude levels of the mixture. Please note, however, that each instrument inside the mixture has a different amplitude α(p), α(p) 1, . . . , α(p) M, i.e., the DNN learns to extract the target instrument even if it has a varying amplitude compared to the background instruments. 2.3. DNN Training Using the dataset that we generated as outlined above, we can learn the network weights such that the sum-of-squared errors (SSE) be- tween the P targets s(p)and the DNN outputs ˆs(p)is minimized4. Due to the special network structure and the use of ReLU (cf. Sec. 2.1), we can perform a layer-wise training of the DNN. Each time a new layer is added, we ﬁrst initialize the weights using least squares estimates of Wk and bk by neglecting the nonlinear rectiﬁer function. As the target vectors s(p)are non-negative, we know that the SSE after adding the ReLU activation function can not increase and, hence, using the least-squares solution as initialization results in a good starting point for the L-BFGS solver that we then use. In the following, we will now describe in more details the two steps that we perform if a new layer is added: (a) Weight initialization: For the kth layer, we solve the optimization problem {Winit k, binit k} = arg min Wk,bk P X p=1 s(p) −  Wkx(p) k + bk  2 (4) where x(p) k denotes either the pth DNN input for k = 1 or the output of the (k −1)th layer if k > 1. Using (4), we choose the initial weights of the network such that they are the optimal linear least squares reconstruction of the targets {s(p)}p=1,...,P from the fea- tures {x(p) k}p=1,...,P . As we know that all elements of the target vector s(p)are non-negative, it is obvious that the total error can not increase by adding the ReLU activation function and, therefore, this initialization is a good starting point for the iterative training in step (b). The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k. (b) L-BFGS training: Starting from the initialization (a), we use a L-BFGS training with the SSE cost function to update the complete network, i.e., to update {W1, b1}, . . ., {Wk, bk}. 4We also tested the weighted Euclidean distance [19] as it showed good results for speech enhancement. However, we could not see an improvement and therefore use the SSE cost function in the following. These two steps are done K times in order to result in a network with K ReLU layers. Finally, after adding all layers, we do a ﬁne tuning of the complete network, where we again use L-BFGS. Using this procedure, we train the DNN as a denoising network as each layer, when it is added to the network, tries to recover the original targets s(p)from the output of the previous layer. This is similar to stacked denoising autoencoders, see [20, 21]. In our ex- periments, we have noticed that using the least squares initialization is advantageous with respect to the following two aspects if com- pared to a random initialization: First, it reduces the training time for the network considerably as we start the L-BFGS optimizer from a good initial value and, second, we found that we do not have the problem of converging to poor local minima which was sometimes the case for the random initialization. In the next section, we will show the beneﬁt of using the proposed initialization. 3. SEPARATION RESULTS In the following, we will now give results for the proposed DNN ap- proach. We consider two monaural music mixtures from the TRIOS dataset [22], each composed of three instruments: the “Brahms” trio consisting of a horn, a piano and a violin and the “Lussier” trio with a bassoon, a piano and a trumpet. We use the following settings for our experiments: The DNN system sampling rate (cf. Sec. 2.2) was chosen to be 32kHz which is a compromise between the audio quality of the extracted instru- ment and the DNN training time. For each frame, we have L = 513 magnitude values and we augment the input vector by C = 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN. Hence, one DNN input vector x has a length of (2C + 1)L = 3591 elements and corresponds to 224 milliseconds of the mixture signal. For the training, we use P = 106samples and the gen- erated training material has thus a length of 62.2 hours. During the layerwise training, we use 600 L-BFGS iterations for each new layer and the ﬁnal ﬁne tuning consists of 3000 additional L-BFGS iterations for the complete network such that in total we execute 5  600 + 3000 = 6000 L-BFGS iterations. Table 2 shows the BSS Eval values [23], i.e., the signal-to- distortion ratio (SDR), signal-to-interference ratio (SIR) and signal- to-artifact ratio (SAR) values after the addition of each ReLU layer. Besides the raw DNN outputs, we also give the BSS Eval values if we use a Wiener ﬁlter to combine the DNN outputs of the three instruments. This additional post-processing step allows an en- hancement of the source separation results since, from the raw DNN outputs, it computes for each instrument a softmask and applies it to the original mixture spectrogram. Looking at the results in Table 2, we can see that there is a noticeable improvement when adding the ﬁrst three layers but the difference becomes smaller for additional layers. For “Brahms”, the best results are obtained after adding all ﬁve layers and performing the ﬁnal ﬁne tuning. This is different for “Lussier”: For the trumpet, we can see that the network is starting to overﬁt to the training set when adding more than three layers as the SDR/SIR values start to decrease. The problem is the limited amount of material for the trumpet (22.5 minutes of solo performances, see Table 1), which is too small. Interestingly, also the DNNs for the other two instruments start to overﬁt which is probably also due to the trumpet in the mixture. From the results we can conclude that having sufﬁcient material for each instrument is vital if only the instrument type is known since only this ensures a good source separation quality and avoids overﬁtting. Table 3 shows for comparison the BSS Eval results for three unsupervised NMF based source separation approaches: • “MFCC kmeans [17]”: This approach uses a Mel ﬁlter bank of size 30 which is applied to the frequency basis vectors of the NMF decomposition in order to compute MFCCs. These are 2137
-Instrument Output After 1st layer After 2nd layer After 3rd layer After 4th layer After 5th layer After ﬁne tuning SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn Raw output 3.30 4.79 9.93 5.15 8.19 8.73 5.29 8.50 8.69 5.38 8.66 8.69 5.53 9.19 8.47 5.70 9.57 8.44 WF output 4.05 5.63 10.25 6.36 10.20 9.08 6.51 10.81 8.87 6.58 10.99 8.87 6.71 11.44 8.79 6.80 11.68 8.79 Piano Raw output 0.85 1.93 9.58 2.34 4.37 7.97 3.16 6.60 6.64 3.26 6.61 6.82 3.34 6.86 6.71 3.47 7.34 6.51 WF output 2.62 4.54 8.41 4.13 7.53 7.49 4.36 9.07 6.66 4.40 9.13 6.67 4.47 9.41 6.62 4.68 10.13 6.54 Violin Raw output −0.23 1.88 6.11 3.06 9.52 4.63 3.49 9.21 5.33 3.50 9.23 5.34 3.57 9.44 5.33 3.90 10.34 5.41 WF output 3.62 8.57 5.86 5.27 14.10 6.05 6.04 15.19 6.74 6.08 15.30 6.76 6.02 15.36 6.68 6.11 15.60 6.75 Lussier Bassoon Raw output 3.05 5.48 7.82 3.47 6.51 7.32 3.62 7.00 7.07 3.68 7.14 7.04 3.72 7.31 6.96 3.39 7.08 6.60 WF output 4.38 7.55 7.94 4.40 9.38 6.53 4.36 9.71 6.30 4.42 9.75 6.36 4.34 9.75 6.26 3.92 9.37 5.85 Piano Raw output 1.57 3.30 8.08 1.69 4.06 6.90 1.87 4.21 7.08 1.94 4.31 7.06 1.93 4.38 6.92 1.97 4.65 6.61 WF output 3.12 6.07 7.14 3.33 6.60 6.95 3.23 6.44 6.94 3.32 6.64 6.89 3.27 6.69 6.75 2.99 6.64 6.29 Trumpet Raw output 5.01 9.37 7.47 6.28 11.26 8.25 6.61 11.67 8.51 6.56 11.54 8.52 6.55 11.57 8.49 6.38 11.49 8.27 WF output 6.00 10.18 8.49 7.14 12.86 8.71 7.38 13.55 8.77 7.23 13.43 8.62 7.22 13.49 8.58 7.23 13.54 8.57 Table 2: BSS Eval results for DNN instrument extraction (“Brahms” and “Lussier” trio, all values are given in dB) Instrument MFCC kmeans [17] Mel NMF [17] Shifted-NMF [18] DNN with WF SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn 3.87 5.76 9.41 4.17 5.83 10.17 2.95 3.34 15.20 6.80 11.68 8.79 Piano 3.30 4.42 10.76 −0.10 0.21 14.39 3.78 5.59 9.50 4.68 10.13 6.54 Violin −8.35 −7.89 10.21 9.69 19.79 10.19 7.66 10.96 10.74 6.11 15.60 6.75 Average −0.39 0.76 10.13 4.59 8.61 11.58 4.80 6.63 11.81 5.86 12.47 7.36 Lussier Bassoon 1.85 11.67 2.61 0.15 0.75 11.72 −0.83 −0.60 15.43 3.92 9.37 5.85 Piano 4.66 6.28 10.64 4.56 8.00 7.83 2.54 5.14 7.16 2.99 6.64 6.29 Trumpet −1.73 −1.29 12.18 8.46 18.12 9.05 6.57 7.39 14.95 7.23 13.54 8.57 Average 1.59 5.55 8.48 4.39 8.96 9.53 2.76 3.98 12.51 4.71 9.85 6.90 Table 3: Comparison of BSS Eval results (all values are given in dB) then clustered via kmeans. For the Mel ﬁlter bank, we use the implementation [24] of [25]. • “Mel NMF [17]”: This approach also applies a Mel ﬁlter bank of size 30 to the original frequency basis vectors and uses a sec- ond NMF to perform the clustering. • “Shifted-NMF [18]”: For this approach, we use a constant Q transform matrix with minimal frequency 55 Hz and 24 fre- quency bins per octave. The shifted-NMF decomposition is al- lowed to use a maximum of 24 shifts. The constant Q transform source code was kindly provided by D. FitzGerald and we use the Tensor toolbox [26,27] for the shifted-NMF implementation. The best SDR values in Table 3 are emphasized in bold face and we can observe that, although our DNN approach not always gives the best individual SDR per instrument, it has the best average SDR for both mixtures since it is capable of extracting three sources with similar quality. This is not the case for the NMF approaches which have one instrument with a low SIR value, i.e., one instrument that is not well separated from the others.5 In order to see the beneﬁt of the least squares initialization from Sec. 2.3 we show in Fig. 2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec. 2.2. The denominator of J gives the SSE of a baseline system where the DNN is perform- ing an identity transform. From Fig. 2 we can see that the error is signiﬁcantly decreased whenever a new layer is added as the error J exhibits downward “jumps”. These “jumps” are due to the least squares initialization of the network weights. For example, consider the training error in Fig. 2 of the network that extracts the piano: When the ﬁrst layer is added, we have an initial error of J = 0.23, which means that, using the least squares initialization from Sec. 2.3, we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1 = 0. Would we have used the 5Please note that the considered NMF approaches are only assuming to know the number of sources, i.e., they use less prior knowledge than our DNN approach. We also tried the supervised NMF approach from [28] where the frequency basis vectors are pre-trained on our instrument database. How- ever, this supervised NMF approach resulted in signiﬁcant worse SDR values as the learned frequency bases for the instruments are correlated which intro- duces interference. 600 1200 1800 2400 3000 6000 0.08 0.1 0.12 0.14 0.16 0.18 0.2 0.22 Number of L−BFGS iterations Normalized training error J 2nd layer added 3rd layer added 4th layer added 5th layer added Start fine tuning Piano Horn Violin Fig. 2: Evolution of training error for “Brahms” baseline initialization, then a simulation showed that it would have taken us 980 additional L-BFGS iterations to reach the error value of the least squares initialization. These L-BFGS iterations can be saved and, therefore, we converge much faster to a network with a good instrument extraction performance. 4. CONCLUSIONS AND FUTURE WORK In this paper, we used a deep neural network for the extraction of an instrument from music. Using only the knowledge of the instrument types, we generated the training data from a database with solo in- strument performances and the network is trained layer-wise with a least-squares initialization of the weights. During our experiments, we noticed that the material length and quality of the solo performances is important as only sufﬁcient ma- terial allows the neural network to generalize to new, i.e., before unseen, instruments. We therefore plan to incorporate the “RWC Music Instrument Sounds” database [29] as it contains high quality samples from many instruments. Furthermore, our data generation process in Sec. 2.2 currently does not exploit music theory when generating the mixtures and we think that, taking such knowledge into account, should generate training data that is better suited for the instrument extraction task. 2138
-5. REFERENCES [1] P. Comon and C. Jutten, Eds., Handbook of Blind Source Sep- aration: Independent Component Analysis and Applications, Academic Press, 2010. [2] G. R. Naik and W. Wang, Eds., Blind Source Separation: Advances in Theory, Algorithms and Applications, Springer, 2014. [3] Z. Raﬁi and B. Pardo, “Repeating pattern extraction technique (REPET): A simple method for music/voice separation,” IEEE Transactions on Audio, Speech, and Language Processing, vol. 21, no. 1, pp. 73–84, 2013. [4] J.-L. Durrieu, B. David, and G. Richard, “A musically moti- vated mid-level representation for pitch estimation and musical audio source separation,” IEEE Journal on Selected Topics on Signal Processing, vol. 5, pp. 1180–1191, 2011. [5] D. FitzGerald, “Upmixing from mono - a source separation ap- proach,” Proc. 17th International Conference on Digital Signal Processing, 2011. [6] D. FitzGerald, “The good vibrations problem,” 134th AES Convention, e-brief, 2013. [7] A. Krizhevsky, I. Sutskever, and G. E. Hinton, “Imagenet clas- siﬁcation with deep convolutional neural networks,” in Ad- vances in neural information processing systems, 2012, pp. 1097–1105. [8] C. Farabet, C. Couprie, L. Najman, and Y. LeCun, “Learning hierarchical features for scene labeling,” IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 35, no. 8, pp. 1915–1929, 2013. [9] G. Hinton, L. Deng, D. Yu, G. E. Dahl, A.-R. Mohamed, N. Jaitly, A. Senior, V. Vanhoucke, P. Nguyen, T. N. Sainath, et al., “Deep neural networks for acoustic modeling in speech recognition: The shared views of four research groups,” IEEE Signal Processing Magazine, vol. 29, no. 6, pp. 82–97, 2012. [10] E. M. Grais, M. U. Sen, and H. Erdogan, “Deep neu- ral networks for single channel source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Process- ing (ICASSP), pp. 3734–3738, 2014. [11] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Deep learning for monaural speech sepa- ration,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 1562–1566, 2014. [12] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Singing-voice separation from monaural recordings using deep recurrent neural networks,” Interna- tional Society for Music Information Retrieval Conference (ISMIR), 2014. [13] X. Glorot, A. Bordes, and Y. Bengio, “Deep sparse rectiﬁer networks,” Proceedings of the 14th International Conference on Artiﬁcial Intelligence and Statistics, vol. 15, pp. 315–323, 2011. [14] M. D. Zeiler, M. Ranzato, R. Monga, M. Mao, K. Yang, Q. V. Le, P. Nguyen, A. Senior, V. Vanhoucke, J. Dean, et al., “On rectiﬁed linear units for speech processing,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 3517–3521, 2013. [15] B. Yang, “A study of inverse short-time Fourier transform,” Proc. IEEE Conference on Acoustics, Speech, and Signal Pro- cessing (ICASSP), pp. 3541–3544, 2008. [16] P. Smaragdis and G. J. Mysore, “Separation by “humming”: User-guided sound extraction from monophonic mixtures,” IEEE Workshop on Applications of Signal Processing to Au- dio and Acoustics, pp. 69–72, 2009. [17] M. Spiertz and V. Gnann, “Source-ﬁlter based clustering for monaural blind source separation,” Proc. Int. Conference on Digital Audio Effects, 2009. [18] R. Jaiswal, D. FitzGerald, D. Barry, E. Coyle, and S. Rickard, “Clustering NMF basis functions using shifted NMF for monaural sound source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 245– 248, 2011. [19] P. C. Loizou, “Speech enhancement based on perceptually mo- tivated Bayesian estimators of the magnitude spectrum,” IEEE Transactions on Speech and Audio Processing, vol. 13, no. 5, pp. 857–869, 2005. [20] P. Vincent, H. Larochelle, Y. Bengio, and P.-A. Manzagol, “Ex- tracting and composing robust features with denoising autoen- coders,” Proceedings of the International Conference on Ma- chine Learning, pp. 1096–1103, 2008. [21] M. Chen, Z. Xu, K. Weinberger, and F. Sha, “Marginalized denoising autoencoders for domain adaptation,” Proceedings of the International Conference on Machine Learning, 2012. [22] J. Fritsch, “High quality musical audio source separation,” Master’s Thesis, UPMC / IRCAM / Telecom ParisTech, 2012. [23] E. Vincent, R. Gribonval, and C. Fevotte, “Performance mea- surement in blind audio source separation,” IEEE Transactions on Audio, Speech and Language Processing, vol. 14, no. 4, pp. 1462–1469, 2006. [24] P. Brady, “Matlab Mel ﬁlter implementation,” http://www.mathworks.com/matlabcentral/ fileexchange/23179-melfilter, 2014, [Online]. [25] F. Zheng, G. Zhang, and Z. Song, “Comparison of different implementations of MFCC,” Journal of Computer Science and Technology, vol. 16, no. 6, pp. 582–589, September 2001. [26] B. W. Bader and T. G. Kolda, “MATLAB tensor toolbox version 2.5,” http://www.sandia.gov/˜tgkolda/ TensorToolbox/, January 2012, [Online]. [27] B. W. Bader and T. G. Kolda, “Algorithm 862: MATLAB ten- sor classes for fast algorithm prototyping,” ACM Transactions on Mathematical Software, vol. 32, no. 4, pp. 635–653, De- cember 2006. [28] E. M. Grais and H. Erdogan, “Single channel speech music separation using nonnegative matrix factorization and spectral mask,” Digital Signal Processing (DSP), 2011 17th Interna- tional Conference on IEEE, pp. 1–6, 2011. [29] M. Goto, H. Hashiguchi, T. Nishimura, and R. Oka, “RWC Music Database: Music Genre Database and Musical Instru- ment Sound Database,” Proc. of the International Conference on Music Information Retrieval (ISMIR), pp. 229–230, 2003. 2139 View publication stats
-
-## Images
-
-### Image 1
-**Description:** small rectangular grayscale image (64x64)
-![Image 1](page_1_img_1_0f58f9aa.png)
-**Dimensions:** 64x64
-
-### Image 2
-**Description:** small rectangular color image (64x64)
-![Image 2](page_1_img_2_87e4f64c.png)
-**Dimensions:** 64x64
-
-### Image 3
-**Description:** small rectangular color image (64x64)
-![Image 3](page_1_img_3_1be6f0da.png)
-**Dimensions:** 64x64
-
-
-## Tables
-
-### Table 1
-| See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper · April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS READS 138 4,160 3 authors: Stefan Uhlich Franck Giron University of Stuttgart Sony Europe B.V., Zwg. Deutschland 67 PUBLICATIONS 1,229 CITATIONS 8 PUBLICATIONS 380 CITATIONS SEE PROFILE SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175 PUBLICATIONS 2,294 CITATIONS SEE PROFILE |  |
-| --- | --- |
-| All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file. |  |
-
-### Table 2
-| Instrument | Numberoffiles (=bVariations) | Materiallength |
-| --- | --- | --- |
-| Bassoon Cello Clarinet Horn Piano Saxophone Trumpet Viola Violin | 18 6 14 14 89 19 16 13 12 | 1.44hours 1.88hours 1.15hours 0.82hours 6.12hours 1.16hours 0.38hours 1.61hours 5.60hours |
-
-### Table 3
-| Instrument Output | After1stlayer SDR SIR SAR | After2ndlayer SDR SIR SAR | After3rdlayer SDR SIR SAR | After4thlayer SDR SIR SAR | After5thlayer SDR SIR SAR | Afterfinetuning SDR SIR SAR |
-| --- | --- | --- | --- | --- | --- | --- |
-| Rawoutput Horn WFoutput smharB Rawoutput Piano WFoutput Rawoutput Violin WFoutput | 3.30 4.79 9.93 4.05 5.63 10.25 | 5.15 8.19 8.73 6.36 10.20 9.08 | 5.29 8.50 8.69 6.51 10.81 8.87 | 5.38 8.66 8.69 6.58 10.99 8.87 | 5.53 9.19 8.47 6.71 11.44 8.79 | 5.70 9.57 8.44 6.80 11.68 8.79 |
-|  | 0.85 1.93 9.58 2.62 4.54 8.41 | 2.34 4.37 7.97 4.13 7.53 7.49 | 3.16 6.60 6.64 4.36 9.07 6.66 | 3.26 6.61 6.82 4.40 9.13 6.67 | 3.34 6.86 6.71 4.47 9.41 6.62 | 3.47 7.34 6.51 4.68 10.13 6.54 |
-|  | −0.23 1.88 6.11 3.62 8.57 5.86 | 3.06 9.52 4.63 5.27 14.10 6.05 | 3.49 9.21 5.33 6.04 15.19 6.74 | 3.50 9.23 5.34 6.08 15.30 6.76 | 3.57 9.44 5.33 6.02 15.36 6.68 | 3.90 10.34 5.41 6.11 15.60 6.75 |
-| Rawoutput Bassoon WFoutput reissuL Rawoutput Piano WFoutput Rawoutput Trumpet WFoutput | 3.05 5.48 7.82 4.38 7.55 7.94 | 3.47 6.51 7.32 4.40 9.38 6.53 | 3.62 7.00 7.07 4.36 9.71 6.30 | 3.68 7.14 7.04 4.42 9.75 6.36 | 3.72 7.31 6.96 4.34 9.75 6.26 | 3.39 7.08 6.60 3.92 9.37 5.85 |
-|  | 1.57 3.30 8.08 3.12 6.07 7.14 | 1.69 4.06 6.90 3.33 6.60 6.95 | 1.87 4.21 7.08 3.23 6.44 6.94 | 1.94 4.31 7.06 3.32 6.64 6.89 | 1.93 4.38 6.92 3.27 6.69 6.75 | 1.97 4.65 6.61 2.99 6.64 6.29 |
-|  | 5.01 9.37 7.47 6.00 10.18 8.49 | 6.28 11.26 8.25 7.14 12.86 8.71 | 6.61 11.67 8.51 7.38 13.55 8.77 | 6.56 11.54 8.52 7.23 13.43 8.62 | 6.55 11.57 8.49 7.22 13.49 8.58 | 6.38 11.49 8.27 7.23 13.54 8.57 |
-
-### Table 4
-| Instrument | MFCCkmeans[17] SDR SIR SAR | MelNMF[17] SDR SIR SAR | Shifted-NMF[18] SDR SIR SAR | DNNwithWF SDR SIR SAR |
-| --- | --- | --- | --- | --- |
-| Horn smharB Piano Violin Average | 3.87 5.76 9.41 3.30 4.42 10.76 −8.35 −7.89 10.21 | 4.17 5.83 10.17 −0.10 0.21 14.39 9.69 19.79 10.19 | 2.95 3.34 15.20 3.78 5.59 9.50 7.66 10.96 10.74 | 6.80 11.68 8.79 4.68 10.13 6.54 6.11 15.60 6.75 |
-|  | −0.39 0.76 10.13 | 4.59 8.61 11.58 | 4.80 6.63 11.81 | 5.86 12.47 7.36 |
-| Bassoon reissuL Piano Trumpet Average | 1.85 11.67 2.61 4.66 6.28 10.64 −1.73 −1.29 12.18 | 0.15 0.75 11.72 4.56 8.00 7.83 8.46 18.12 9.05 | −0.83 −0.60 15.43 2.54 5.14 7.16 6.57 7.39 14.95 | 3.92 9.37 5.85 2.99 6.64 6.29 7.23 13.54 8.57 |
-|  | 1.59 5.55 8.48 | 4.39 8.96 9.53 | 2.76 3.98 12.51 | 4.71 9.85 6.90 |
-
-### Table 5
-|  |  |  |  |  | dedda r |  |  | dedda r |  |  | dedda r |  |  | gninut e |  | Piano Horn Violin |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-|  |  |  |  | dr | eyal |  | ht | eyal |  | ht | eyal |  |  | nif trat |  |  |
-|  |  |  |  |  | 3 |  |  | 4 |  |  | 5 |  |  | S |  |  |
-|  |  | d |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  | edda |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | d | reyal |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-
-
-## Mathematical Formulas
-
-### Formula 1
-```latex
-i=1 vi(n)
-```
-
-### Formula 2
-```latex
-\frac{8}{15}
-```
-
-### Formula 3
-```latex
-= s(n) + M X i
-```
-
-### Formula 4
-```latex
-=1 vi(n)
-```
-
-### Formula 5
-```latex
-2135 978-1-4673-6997-\frac{8}{15}/$31.00 2015 IEEE ICASSP 2015
-```
-
-### Formula 6
-```latex
-k = 1
-```
-
-### Formula 7
-```latex
-k=1
-```
-
-### Formula 8
-```latex
-p=1
-```
-
-### Formula 9
-```latex
-b= Variations) Bassoon 18 1
-```
-
-### Formula 10
-```latex
-i = 1
-```
-
-### Formula 11
-```latex
-i=1
-```
-
-### Formula 12
-```latex
-> 0 in order to make it independent of different amplitude levels of the mixture x(n) where
-```
-
-### Formula 13
-```latex
-1 = max (Wkxk + bk
-```
-
-### Formula 14
-```latex
-i o with i = 1
-```
-
-### Formula 15
-```latex
-= 1
-```
-
-### Formula 16
-```latex
-M X i=1
-```
-
-### Formula 17
-```latex
-Mixture x(n) ..
-```
-
-### Formula 18
-```latex
-,˜s(P )o and n ˜v(1) i ,
-```
-
-### Formula 19
-```latex
-, ˜v(P ) i o with i = 1,
-```
-
-### Formula 20
-```latex
-, M where ˜s(p)\inC(2C+1)Land ˜v(p) i \inC(2C+1)L, i.e., they also contain the 2C neighboring frames
-```
-
-### Formula 21
-```latex
-These are now combined to form the DNN input/targets, i.e., x(p)= 1 \gamma(p) \alpha(p)˜s(p) + M X i=1 \alpha(p) i ˜v(p) i , (3a) 2136
-```
-
-### Formula 22
-```latex
-i=1
-```
-
-### Formula 23
-```latex
-S = 0    0 I 0    0
-```
-
-### Formula 24
-```latex
-p=1 s(p)
-```
-
-### Formula 25
-```latex
-k = 1 or the output of the (k
-```
-
-### Formula 26
-```latex
-p=1
-```
-
-### Formula 27
-```latex
-k = CsxC
-```
-
-### Formula 28
-```latex
-k= s
-```
-
-### Formula 29
-```latex
-x = P X p
-```
-
-### Formula 30
-```latex
-s =1 P PP p
-```
-
-### Formula 31
-```latex
-k = 1 P PP p
-```
-
-### Formula 32
-```latex
-L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 33
-```latex
-L = 3591 elements and corresponds to 224 milliseconds of the mixture signal
-```
-
-### Formula 34
-```latex
-P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 35
-```latex
-> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in
-```
-
-### Formula 36
-```latex
-PM i=1
-```
-
-### Formula 37
-```latex
-= arg min Wk
-```
-
-### Formula 38
-```latex
-bk P X p=1 s(p)
-```
-
-### Formula 39
-```latex
-k denotes either the pth DNN input for k = 1 or the output of the (k
-```
-
-### Formula 40
-```latex
-form and the solution is given by Winit k = CsxC
-```
-
-### Formula 41
-```latex
-binit k= s
-```
-
-### Formula 42
-```latex
-with Csx = P X p
-```
-
-### Formula 43
-```latex
-=1  s(p)
-```
-
-### Formula 44
-```latex
-Cxx = P X p
-```
-
-### Formula 45
-```latex
-=1  x(p) k
-```
-
-### Formula 46
-```latex
-and s =1 P PP p
-```
-
-### Formula 47
-```latex
-=1s(p)
-```
-
-### Formula 48
-```latex
-xk = 1 P PP p
-```
-
-### Formula 49
-```latex
-=1x(p) k
-```
-
-### Formula 50
-```latex
-we have L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 51
-```latex
-= 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN
-```
-
-### Formula 52
-```latex
-we use P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 53
-```latex
-3000 = 6000 L-BFGS iterations
-```
-
-### Formula 54
-```latex
-s(p)=\alpha(p) \gamma(p) S ˜s(p) , (3b) where \gamma(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in \alpha(p)˜s(p) + PM i=1\alpha(p) i ˜v(p) i and S \inRL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0
-```
-
-### Formula 55
-```latex
-The scalars \alpha(p), \alpha(p) 1,
-```
-
-### Formula 56
-```latex
-The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k
-```
-
-### Formula 57
-```latex
-., {Wk, bk}
-```
-
-### Formula 58
-```latex
-J = (PP p
-```
-
-### Formula 59
-```latex
-p=1
-```
-
-### Formula 60
-```latex
-J = 0
-```
-
-### Formula 61
-```latex
-2 the evolution of the normalized DNN training error J = (PP p
-```
-
-### Formula 62
-```latex
-=1
-```
-
-### Formula 63
-```latex
-PP p=1
-```
-
-### Formula 64
-```latex
-we have an initial error of J = 0
-```
-
-### Formula 65
-```latex
-we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1
-```
-
-### Formula 66
-```latex
-= 0
-```
-
-### Formula 67
-```latex
-2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec
-```
-
-### Formula 68
-```latex
-REFERENCES [1] P
-```
-
-### Formula 69
-```latex
-[2] G
-```
-
-### Formula 70
-```latex
-[3] Z
-```
-
-### Formula 71
-```latex
-[4] J.-L
-```
-
-### Formula 72
-```latex
-[5] D
-```
-
-### Formula 73
-```latex
-[6] D
-```
-
-### Formula 74
-```latex
-[7] A
-```
-
-### Formula 75
-```latex
-[8] C
-```
-
-### Formula 76
-```latex
-[9] G
-```
-
-### Formula 77
-```latex
-[10] E
-```
-
-### Formula 78
-```latex
-[11] P.-S
-```
-
-### Formula 79
-```latex
-[12] P.-S
-```
-
-### Formula 80
-```latex
-[13] X
-```
-
-### Formula 81
-```latex
-[14] M
-```
-
-### Formula 82
-```latex
-[15] B
-```
-
-### Formula 83
-```latex
-[16] P
-```
-
-### Formula 84
-```latex
-[17] M
-```
-
-### Formula 85
-```latex
-[18] R
-```
-
-### Formula 86
-```latex
-[19] P
-```
-
-### Formula 87
-```latex
-[20] P
-```
-
-### Formula 88
-```latex
-[21] M
-```
-
-### Formula 89
-```latex
-[22] J
-```
-
-### Formula 90
-```latex
-[23] E
-```
-
-### Formula 91
-```latex
-[24] P
-```
-
-### Formula 92
-```latex
-[25] F
-```
-
-### Formula 93
-```latex
-[26] B
-```
-
-### Formula 94
-```latex
-[27] B
-```
-
-### Formula 95
-```latex
-[28] E
-```
-
-### Formula 96
-```latex
-[29] M
-```
-
-
-## Forms and Fields
-
-### Form 1
-
-### Form 2
-
-### Form 3
-
-### Form 4
-
-### Form 5
-
-
-
-
+#### Images
+
+##### Image 1
+**Description:** large rectangular color image (1520x2239)  
+![Image 1](page_3_img_1_e7acc8c9.png)  
+**Dimensions:** 1520x2239  
+
+##### Image 2
+**Description:** medium rectangular color image (445x884)  
+![Image 2](page_4_img_1_a019f0b6.png)  
+**Dimensions:** 445x884  
+
+##### Image 3
+**Description:** large rectangular color image (835x1282)  
+![Image 3](page_4_img_2_72d15ff8.png)  
+**Dimensions:** 835x1282  
+
+### Tables
+
+#### Table 1
+| train | N | d | d | h | d | d | P | ϵ | model | ff | k | v | drop | ls | steps |
+|-------|---|---|---|---|---|---|---|---|-------|----|---|---|------|----|-------|
+| 6     | 512 | 2048 | 8 | 64 | 64 | 0.1 | 0.1 | 100K |    |   |   |      |    |       |
+| 1     | 512 | 512 | 4 | 128 | 128 | 16 | 32 | 32 |    |   |   |      |    |       |
+| 16    | 32 |   |   |   |   |   |   |   |    |   |   |      |    |       |
+| 2     | 4 | 8 | 256 | 32 | 32 | 1024 | 128 | 128 | 1024 | 4096 |   |   |   |   |
+| 0.0   | 0.2 | 0.0 | 0.2 |   |   |   |   |   |   |   |   |   |   |   |
+| positional embedding instead of sinusoids |   |   |   |   |   |   |   |   |   |   |   |   |   |   |
+| 6     | 1024 | 4096 | 16 | 0.3 | 300K |   |   |   |   |   |   |   |   |   |
+
+#### Table 2
+| Training |
+|----------|
+| WSJ only, discriminative |
+| semi-supervised |
+| multi-task |
+| generative |
+
+#### Table 3
+| N | dmodel | dff | h | dk | dv | Pdrop | ϵls | train | PPL | BLEU | params | steps |
+|---|--------|-----|---|----|----|-------|-----|-------|-----|------|--------|-------|
+| 6 | 512 | 2048 | 8 | 64 | 64 | 0.1 | 0.1 | 100K | 4.92 | 25.8 | 65 |
+| 1 | 512 | 512 | 5.29 | 24.9 | 4 | 128 | 128 | 5.00 | 25.5 | 16 | 32 | 32 | 4.91 | 25.8 | 32 | 16 | 16 | 5.01 | 25.4 |
+| 16 | 5.16 | 25.1 | 58 | 32 | 5.01 | 25.4 | 60 | 2 | 6.11 | 23.7 | 36 | 4 | 5.19 | 25.3 | 50 | 8 | 4.88 | 25.5 | 80 | 256 | 32 | 32 | 5.75 | 24.5 | 28 | 1024 | 128 | 128 | 4.66 | 26.0 | 168 | 1024 | 5.12 | 25.4 | 53 | 4096 | 4.75 | 26.2 | 90 | 0.0 | 5.77 | 24.6 | 0.2 | 4.95 | 25.5 | 0.0 | 4.67 | 25.3 | 0.2 | 5.47 | 25.7 | positional embedding instead of sinusoids | 4.92 | 25.7 | big | 6 | 1024 | 4096 | 16 | 0.3 | 300K | 4.33 | 26.4 | 213 |
+
+#### Table 4
+| Parser | Training | WSJ 23 F1 |
+|--------|----------|-----------|
+| Vinyals & Kaiser el al. (2014) | WSJ only, discriminative | 88.3 |
+| Petrov et al. (2006) | WSJ only, discriminative | 90.4 |
+| Zhu et al. (2013) | WSJ only, discriminative | 90.4 |
+| Dyer et al. (2016) | WSJ only, discriminative | 91.7 |
+| Transformer (4 layers) | WSJ only, discriminative | 91.3 |
+| Zhu et al. (2013) | semi-supervised | 91.3 |
+| Huang & Harper (2009) | semi-supervised | 91.3 |
+| McClosky et al. (2006) | semi-supervised | 92.1 |
+| Vinyals & Kaiser el al. (2014) | semi-supervised | 92.1 |
+| Transformer (4 layers) | semi-supervised | 92.7 |
+| Luong et al. (2015) | multi-task | 93.0 |
+| Dyer et al. (2016) | generative | 93.3 |
 
 ### Formulas
 
-# test_document
-*Converted from PDF using PPARSER*
-
-## Table of Contents
-- [Content](#content)
-- [Images](#images)
-- [Tables](#tables)
-- [Formulas](#formulas)
-- [Forms](#forms)
-
-## Content
-See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper  April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS 138 READS 4,160 3 authors: Stefan Uhlich University of Stuttgart 67PUBLICATIONS1,229CITATIONS SEE PROFILE Franck Giron Sony Europe B.V., Zwg. Deutschland 8PUBLICATIONS380CITATIONS SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175PUBLICATIONS2,294CITATIONS SEE PROFILE All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file.
-DEEP NEURAL NETWORK BASED INSTRUMENT EXTRACTION FROM MUSIC Stefan Uhlich1, Franck Giron1and Yuki Mitsufuji2 1 Sony European Technology Center (EuTEC), Stuttgart, Germany 2 Sony Corporation, Audio Technology Development Department, Tokyo, Japan ABSTRACT This paper deals with the extraction of an instrument from music by using a deep neural network. As prior information, we only as- sume to know the instrument types that are present in the mixture and, using this information, we generate the training data from a database with solo instrument performances. The neural network is built up from rectiﬁed linear units where each hidden layer has the same number of nodes as the output layer. This allows a least squares initialization of the layer weights and speeds up the training of the network considerably compared to a traditional random initializa- tion. We give results for two mixtures, each consisting of three in- struments, and evaluate the extraction performance using BSS Eval for a varying number of hidden layers. Index Terms— Deep neural network (DNN), Instrument extrac- tion, Blind source separation (BSS) 1. INTRODUCTION In this paper, we study the extraction of a target instrument s(n) ∈R from an instantaneous, monaural music mixture x(n) ∈R, i.e., of a mixture that can be written as x(n) = s(n) + M X i=1 vi(n), (1) where vi(n) is the time signal of the ith background instrument and the mixture consists thus in a total of M +1 instruments. From x(n) we want to extract an estimate ˆs(n) of the target instrument s(n) and, therefore, we can see instrument extraction as a special case of the general blind source separation (BSS) problem [1, 2]. Various applications require such an estimate ˆs(n) ranging from Karaoke systems which use a separation into a instruments and a vocal track, see [3, 4], to upmixing where one tries to obtain a multi-channel version of the monaural mixture x(n), see [5,6]. We propose a deep neural network (DNN) for the extraction of the target instrument s(n) from x(n) as DNNs have proved to work very well in various applications and have gained a lot of interest in the last years, especially for classiﬁcation tasks in image process- ing [7, 8] and for speech recognition [9]. We use the DNN in the frequency domain to estimate a target instrument from the mixture, i.e., we train the network such that we can think of it as a “denoiser” which converts the “noisy” mixture spectrogram to the “clean” in- strument spectrogram. For the training of the network, we only as- sume to know the instrument types of the target instrument s(n) and of the other background instruments v1(n), . . . , vM(n), for exam- ple that we want to extract a piano from a mixture with a violin and a horn. This is in contrast to other proposed DNN approaches for BSS of music which are supervised in the sense that they assume to have more knowledge about the signals [10–12]. Huang et. al. used in [11, 12] a deep (recurrent) neural network for the separa- tion of two sources where the neural network is extended by a ﬁnal softmask layer to extract the source estimates and it is trained using a discriminative cost function that also tries to decrease the interfer- ence by other sources. Whereas they only know the type of the target instrument (in their case: singing voice) in [12], they assume that the background is one of 110 known karaoke songs. In contrast, we only know the instrument types that appear in the mixture and, hence, we have to use a large instrument database with solo performances from various musicians and instruments. From this database, we generate the training data that allows us to generalize to new mixtures and this instrument database with the training data generation is thus a integral part of our DNN architecture. A second contribution of the paper is the efﬁcient training of the DNN: We propose a network architecture where each hidden rectiﬁed linear unit (ReLU) layer has the same number of nodes as the output layer. This allows a least squares initialization of the network weights of each layer and, using it as starting point for the limited-memory BFGS (L-BFGS) optimizer, yields a quicker convergence to good network weights. Additionally, we noticed that this initialization often results in ﬁnal network weights which have a smaller training error than if we start the training from randomly initialized weights as we ﬁnd better local minima. The remainder of this paper is organized as follows: In Sec. 2 we describe in detail the DNN based instrument extraction where in particular Sec. 2.1 explains the network structure, Sec. 2.2 shows the generation of the training data and Sec. 2.3 details the layer-wise training procedure. In Sec. 3, we give results for two music mixtures, each consisting of three instruments, before we conclude this paper in Sec. 4 where we summarize our work and give an outlook of future steps. The following notation is used throughout this paper: x denotes a column vector and X a matrix where in particular I is the identity matrix. The matrix transpose and Euclidean norm are denoted by (.)Tand ∥.∥, respectively. Furthermore, max (x, y) is the element- wise maximum operation between x and y, and |x| returns a vector with the element-wise magnitude values of x. 2. DNN BASED INSTRUMENT EXTRACTION 2.1. General Network Structure We will explain now the proposed DNN approach for extracting the target instrument s(n) from the mixture x(n), which is also depicted in Fig. 1. The extraction is done in the frequency domain and it consists of the following three steps: (a) Feature vector generation: We use a short-time Fourier trans- form (STFT) with (possibly overlapping) rectangular windows to transform the mixture signal x(n) into the frequency domain. From this frequency representation, we build a feature vector1 x ∈R(2C+1)Lby stacking the magnitude values of the current frame and the C preceding/succeeding frames where L gives the number of magnitude values per frame. The motivation for using also the 2C neighboring frames is to provide the DNN with tem- poral context that allows it to better extract the target instrument. Please note that these context frames are chosen such that they are 1For convenience, we use in the following a simpliﬁed notation and drop the frame index for x, xk, s, ˆx and γ. 2135 978-1-4673-6997-8/15/$31.00 2015 IEEE ICASSP 2015
-Mixture x(n) ... STFT ... Magnitude STFT frames of x(n) DNN input x ∈R(2C+1)L normalized by γ W1, b1 W2, b2    WK, bK DNN with K ReLU layers DNN output ˆs ∈RL rescaled with γ ... Magnitude STFT frames of ˆs(n) ISTFT ... Recovered instrument ˆs(n) Fig. 1: Instrument extraction using a deep neural network non-overlapping2. Finally, the input vector x is normalized by a scalar γ > 0 in order to make it independent of different amplitude levels of the mixture x(n) where γ is the average Euclidean norm of the 2C + 1 magnitude frames in x. (b) DNN instrument extraction: In a second step, the normalized STFT amplitude vector x is fed to a DNN, which consists of K layers with rectiﬁed linear units (ReLU), i.e., we have xk+1 = max (Wkxk + bk, 0) , k = 1, . . . , K (2) where xk denotes the input to the kth layer and in particular x1 is the DNN input x and xK+1 the DNN output ˆs. Each ReLU layer has L nodes and the network weights {Wk, bk}k=1,...,K are trained such that the DNN outputs an estimate ˆs of the magnitude frame s ∈RL of the target instrument from the mixture vector x. We can thus think of the DNN performing a denoising of the “noisy” mixture input. DNNs with ReLU activation functions have shown very good results, see for example [13, 14], and, as each layer has L hidden units, this activation function will allow us to use a layer-wise least squares initialization as will be shown in Sec. 2.3. (c) Reconstruction of the instrument: Using the phase of the original mixture STFT and multiplying each DNN output ˆs with the energy normalization γ that was applied to the corresponding input vector, we obtain an estimate of the STFT of the target instrument s(n), which we convert back into the time domain using an inverse STFT [15]. Note that the DNN outputs ˆs, i.e., the magnitude frames of the target instrument, will be overlapping as shown in Fig. 1 if the STFT in the ﬁrst step (a) was also using overlapping windows. Please refer to [15] for the ISTFT in this case. 2.2. Training Data Generation In order to train the weights {W1, b1}, . . . , {WK, bK} of the DNN, we need a training set {x(p), s(p)}p=1,...,P of P input/target pairs where x(p)∈R(2C+1)Lis a magnitude vector of the mixture with C preceding/succeeding frames and s(p)∈RLthe corre- sponding magnitude vector of the target instrument that we want to extract. In general, there are several possibilities to generate the required material for the DNN training, which differ in the prior knowledge that we have3: For the target instrument s(n), we either only know the instrument type (e.g., piano) or we have recordings from it. For the background instruments vi(n), we either have no knowledge, we know the instrument types that occur in the mixture or we even have 2E.g., if the STFT uses a overlap of 50%, then we only take every second frame to build the feature vector x. 3Beside the discussed cases, there is also the possibility that we have knowledge about the melody of the target instrument, see for example [16]. Instrument Number of ﬁles Material length (b= Variations) Bassoon 18 1.44 hours Cello 6 1.88 hours Clarinet 14 1.15 hours Horn 14 0.82 hours Piano 89 6.12 hours Saxophone 19 1.16 hours Trumpet 16 0.38 hours Viola 13 1.61 hours Violin 12 5.60 hours Table 1: Instrument database recordings of the particular instruments that occur in the mixture. The easiest case is when we have recordings of the instrument that we want to extract and of those that occur as background in the mix- ture. The most difﬁcult case is when we only know the type of the instrument that we want to extract and do not have any knowledge about the background instruments that will appear in the mixture. In this paper, we assume that we know the instrument types of the tar- get and background, e.g., we know that we want to extract a piano from a mixture with a horn and a violin. Using this prior knowl- edge is reasonable since for many songs, we either have metadata which provides information about the instruments that occur or, in case this information is missing, could be provided by the user. As we only know the instrument types that appear in the mixture, we built a musical instrument database, see Table 1 for the details. The music pieces are stored in the free lossless audio codec (FLAC) for- mat with a sampling rate of 48kHz and contain solo performances of the instruments. For each instrument type we have several ﬁles stemming from different musicians with different instruments play- ing classical masterpieces. These variations are important as we only know the instrument types and, hence, the DNN should generalize well to new instruments of the same type. For the DNN training, we ﬁrst load from the instrument database all audio ﬁles of the instruments that occur in the mixture and resam- ple them to a lower DNN system sampling rate, where the sampling rate is chosen such that the computational complexity of the total DNN system is reduced. In a second step, we convert all signals into the frequency domain using a STFT and randomly sample from the target and background instruments P complex-valued STFT vectors n ˜s(1), . . . ,˜s(P )o and n ˜v(1) i , . . . , ˜v(P ) i o with i = 1, . . . , M where ˜s(p)∈C(2C+1)Land ˜v(p) i ∈C(2C+1)L, i.e., they also contain the 2C neighboring frames. These are now combined to form the DNN input/targets, i.e., x(p)= 1 γ(p) α(p)˜s(p) + M X i=1 α(p) i ˜v(p) i , (3a) 2136
-s(p)=α(p) γ(p) S ˜s(p) , (3b) where γ(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in α(p)˜s(p) + PM i=1α(p) i ˜v(p) i and S ∈RL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0 . The scalars α(p), α(p) 1, . . . , α(p) Mdenote the random amplitudes of each instru- ment which stem from a uniform distribution with support [0.01, 1]. The normalization γ(p)is used to yield a DNN input that is inde- pendent of different amplitude levels of the mixture. Please note, however, that each instrument inside the mixture has a different amplitude α(p), α(p) 1, . . . , α(p) M, i.e., the DNN learns to extract the target instrument even if it has a varying amplitude compared to the background instruments. 2.3. DNN Training Using the dataset that we generated as outlined above, we can learn the network weights such that the sum-of-squared errors (SSE) be- tween the P targets s(p)and the DNN outputs ˆs(p)is minimized4. Due to the special network structure and the use of ReLU (cf. Sec. 2.1), we can perform a layer-wise training of the DNN. Each time a new layer is added, we ﬁrst initialize the weights using least squares estimates of Wk and bk by neglecting the nonlinear rectiﬁer function. As the target vectors s(p)are non-negative, we know that the SSE after adding the ReLU activation function can not increase and, hence, using the least-squares solution as initialization results in a good starting point for the L-BFGS solver that we then use. In the following, we will now describe in more details the two steps that we perform if a new layer is added: (a) Weight initialization: For the kth layer, we solve the optimization problem {Winit k, binit k} = arg min Wk,bk P X p=1 s(p) −  Wkx(p) k + bk  2 (4) where x(p) k denotes either the pth DNN input for k = 1 or the output of the (k −1)th layer if k > 1. Using (4), we choose the initial weights of the network such that they are the optimal linear least squares reconstruction of the targets {s(p)}p=1,...,P from the fea- tures {x(p) k}p=1,...,P . As we know that all elements of the target vector s(p)are non-negative, it is obvious that the total error can not increase by adding the ReLU activation function and, therefore, this initialization is a good starting point for the iterative training in step (b). The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k. (b) L-BFGS training: Starting from the initialization (a), we use a L-BFGS training with the SSE cost function to update the complete network, i.e., to update {W1, b1}, . . ., {Wk, bk}. 4We also tested the weighted Euclidean distance [19] as it showed good results for speech enhancement. However, we could not see an improvement and therefore use the SSE cost function in the following. These two steps are done K times in order to result in a network with K ReLU layers. Finally, after adding all layers, we do a ﬁne tuning of the complete network, where we again use L-BFGS. Using this procedure, we train the DNN as a denoising network as each layer, when it is added to the network, tries to recover the original targets s(p)from the output of the previous layer. This is similar to stacked denoising autoencoders, see [20, 21]. In our ex- periments, we have noticed that using the least squares initialization is advantageous with respect to the following two aspects if com- pared to a random initialization: First, it reduces the training time for the network considerably as we start the L-BFGS optimizer from a good initial value and, second, we found that we do not have the problem of converging to poor local minima which was sometimes the case for the random initialization. In the next section, we will show the beneﬁt of using the proposed initialization. 3. SEPARATION RESULTS In the following, we will now give results for the proposed DNN ap- proach. We consider two monaural music mixtures from the TRIOS dataset [22], each composed of three instruments: the “Brahms” trio consisting of a horn, a piano and a violin and the “Lussier” trio with a bassoon, a piano and a trumpet. We use the following settings for our experiments: The DNN system sampling rate (cf. Sec. 2.2) was chosen to be 32kHz which is a compromise between the audio quality of the extracted instru- ment and the DNN training time. For each frame, we have L = 513 magnitude values and we augment the input vector by C = 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN. Hence, one DNN input vector x has a length of (2C + 1)L = 3591 elements and corresponds to 224 milliseconds of the mixture signal. For the training, we use P = 106samples and the gen- erated training material has thus a length of 62.2 hours. During the layerwise training, we use 600 L-BFGS iterations for each new layer and the ﬁnal ﬁne tuning consists of 3000 additional L-BFGS iterations for the complete network such that in total we execute 5  600 + 3000 = 6000 L-BFGS iterations. Table 2 shows the BSS Eval values [23], i.e., the signal-to- distortion ratio (SDR), signal-to-interference ratio (SIR) and signal- to-artifact ratio (SAR) values after the addition of each ReLU layer. Besides the raw DNN outputs, we also give the BSS Eval values if we use a Wiener ﬁlter to combine the DNN outputs of the three instruments. This additional post-processing step allows an en- hancement of the source separation results since, from the raw DNN outputs, it computes for each instrument a softmask and applies it to the original mixture spectrogram. Looking at the results in Table 2, we can see that there is a noticeable improvement when adding the ﬁrst three layers but the difference becomes smaller for additional layers. For “Brahms”, the best results are obtained after adding all ﬁve layers and performing the ﬁnal ﬁne tuning. This is different for “Lussier”: For the trumpet, we can see that the network is starting to overﬁt to the training set when adding more than three layers as the SDR/SIR values start to decrease. The problem is the limited amount of material for the trumpet (22.5 minutes of solo performances, see Table 1), which is too small. Interestingly, also the DNNs for the other two instruments start to overﬁt which is probably also due to the trumpet in the mixture. From the results we can conclude that having sufﬁcient material for each instrument is vital if only the instrument type is known since only this ensures a good source separation quality and avoids overﬁtting. Table 3 shows for comparison the BSS Eval results for three unsupervised NMF based source separation approaches: • “MFCC kmeans [17]”: This approach uses a Mel ﬁlter bank of size 30 which is applied to the frequency basis vectors of the NMF decomposition in order to compute MFCCs. These are 2137
-Instrument Output After 1st layer After 2nd layer After 3rd layer After 4th layer After 5th layer After ﬁne tuning SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn Raw output 3.30 4.79 9.93 5.15 8.19 8.73 5.29 8.50 8.69 5.38 8.66 8.69 5.53 9.19 8.47 5.70 9.57 8.44 WF output 4.05 5.63 10.25 6.36 10.20 9.08 6.51 10.81 8.87 6.58 10.99 8.87 6.71 11.44 8.79 6.80 11.68 8.79 Piano Raw output 0.85 1.93 9.58 2.34 4.37 7.97 3.16 6.60 6.64 3.26 6.61 6.82 3.34 6.86 6.71 3.47 7.34 6.51 WF output 2.62 4.54 8.41 4.13 7.53 7.49 4.36 9.07 6.66 4.40 9.13 6.67 4.47 9.41 6.62 4.68 10.13 6.54 Violin Raw output −0.23 1.88 6.11 3.06 9.52 4.63 3.49 9.21 5.33 3.50 9.23 5.34 3.57 9.44 5.33 3.90 10.34 5.41 WF output 3.62 8.57 5.86 5.27 14.10 6.05 6.04 15.19 6.74 6.08 15.30 6.76 6.02 15.36 6.68 6.11 15.60 6.75 Lussier Bassoon Raw output 3.05 5.48 7.82 3.47 6.51 7.32 3.62 7.00 7.07 3.68 7.14 7.04 3.72 7.31 6.96 3.39 7.08 6.60 WF output 4.38 7.55 7.94 4.40 9.38 6.53 4.36 9.71 6.30 4.42 9.75 6.36 4.34 9.75 6.26 3.92 9.37 5.85 Piano Raw output 1.57 3.30 8.08 1.69 4.06 6.90 1.87 4.21 7.08 1.94 4.31 7.06 1.93 4.38 6.92 1.97 4.65 6.61 WF output 3.12 6.07 7.14 3.33 6.60 6.95 3.23 6.44 6.94 3.32 6.64 6.89 3.27 6.69 6.75 2.99 6.64 6.29 Trumpet Raw output 5.01 9.37 7.47 6.28 11.26 8.25 6.61 11.67 8.51 6.56 11.54 8.52 6.55 11.57 8.49 6.38 11.49 8.27 WF output 6.00 10.18 8.49 7.14 12.86 8.71 7.38 13.55 8.77 7.23 13.43 8.62 7.22 13.49 8.58 7.23 13.54 8.57 Table 2: BSS Eval results for DNN instrument extraction (“Brahms” and “Lussier” trio, all values are given in dB) Instrument MFCC kmeans [17] Mel NMF [17] Shifted-NMF [18] DNN with WF SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn 3.87 5.76 9.41 4.17 5.83 10.17 2.95 3.34 15.20 6.80 11.68 8.79 Piano 3.30 4.42 10.76 −0.10 0.21 14.39 3.78 5.59 9.50 4.68 10.13 6.54 Violin −8.35 −7.89 10.21 9.69 19.79 10.19 7.66 10.96 10.74 6.11 15.60 6.75 Average −0.39 0.76 10.13 4.59 8.61 11.58 4.80 6.63 11.81 5.86 12.47 7.36 Lussier Bassoon 1.85 11.67 2.61 0.15 0.75 11.72 −0.83 −0.60 15.43 3.92 9.37 5.85 Piano 4.66 6.28 10.64 4.56 8.00 7.83 2.54 5.14 7.16 2.99 6.64 6.29 Trumpet −1.73 −1.29 12.18 8.46 18.12 9.05 6.57 7.39 14.95 7.23 13.54 8.57 Average 1.59 5.55 8.48 4.39 8.96 9.53 2.76 3.98 12.51 4.71 9.85 6.90 Table 3: Comparison of BSS Eval results (all values are given in dB) then clustered via kmeans. For the Mel ﬁlter bank, we use the implementation [24] of [25]. • “Mel NMF [17]”: This approach also applies a Mel ﬁlter bank of size 30 to the original frequency basis vectors and uses a sec- ond NMF to perform the clustering. • “Shifted-NMF [18]”: For this approach, we use a constant Q transform matrix with minimal frequency 55 Hz and 24 fre- quency bins per octave. The shifted-NMF decomposition is al- lowed to use a maximum of 24 shifts. The constant Q transform source code was kindly provided by D. FitzGerald and we use the Tensor toolbox [26,27] for the shifted-NMF implementation. The best SDR values in Table 3 are emphasized in bold face and we can observe that, although our DNN approach not always gives the best individual SDR per instrument, it has the best average SDR for both mixtures since it is capable of extracting three sources with similar quality. This is not the case for the NMF approaches which have one instrument with a low SIR value, i.e., one instrument that is not well separated from the others.5 In order to see the beneﬁt of the least squares initialization from Sec. 2.3 we show in Fig. 2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec. 2.2. The denominator of J gives the SSE of a baseline system where the DNN is perform- ing an identity transform. From Fig. 2 we can see that the error is signiﬁcantly decreased whenever a new layer is added as the error J exhibits downward “jumps”. These “jumps” are due to the least squares initialization of the network weights. For example, consider the training error in Fig. 2 of the network that extracts the piano: When the ﬁrst layer is added, we have an initial error of J = 0.23, which means that, using the least squares initialization from Sec. 2.3, we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1 = 0. Would we have used the 5Please note that the considered NMF approaches are only assuming to know the number of sources, i.e., they use less prior knowledge than our DNN approach. We also tried the supervised NMF approach from [28] where the frequency basis vectors are pre-trained on our instrument database. How- ever, this supervised NMF approach resulted in signiﬁcant worse SDR values as the learned frequency bases for the instruments are correlated which intro- duces interference. 600 1200 1800 2400 3000 6000 0.08 0.1 0.12 0.14 0.16 0.18 0.2 0.22 Number of L−BFGS iterations Normalized training error J 2nd layer added 3rd layer added 4th layer added 5th layer added Start fine tuning Piano Horn Violin Fig. 2: Evolution of training error for “Brahms” baseline initialization, then a simulation showed that it would have taken us 980 additional L-BFGS iterations to reach the error value of the least squares initialization. These L-BFGS iterations can be saved and, therefore, we converge much faster to a network with a good instrument extraction performance. 4. CONCLUSIONS AND FUTURE WORK In this paper, we used a deep neural network for the extraction of an instrument from music. Using only the knowledge of the instrument types, we generated the training data from a database with solo in- strument performances and the network is trained layer-wise with a least-squares initialization of the weights. During our experiments, we noticed that the material length and quality of the solo performances is important as only sufﬁcient ma- terial allows the neural network to generalize to new, i.e., before unseen, instruments. We therefore plan to incorporate the “RWC Music Instrument Sounds” database [29] as it contains high quality samples from many instruments. Furthermore, our data generation process in Sec. 2.2 currently does not exploit music theory when generating the mixtures and we think that, taking such knowledge into account, should generate training data that is better suited for the instrument extraction task. 2138
-5. REFERENCES [1] P. Comon and C. Jutten, Eds., Handbook of Blind Source Sep- aration: Independent Component Analysis and Applications, Academic Press, 2010. [2] G. R. Naik and W. Wang, Eds., Blind Source Separation: Advances in Theory, Algorithms and Applications, Springer, 2014. [3] Z. Raﬁi and B. Pardo, “Repeating pattern extraction technique (REPET): A simple method for music/voice separation,” IEEE Transactions on Audio, Speech, and Language Processing, vol. 21, no. 1, pp. 73–84, 2013. [4] J.-L. Durrieu, B. David, and G. Richard, “A musically moti- vated mid-level representation for pitch estimation and musical audio source separation,” IEEE Journal on Selected Topics on Signal Processing, vol. 5, pp. 1180–1191, 2011. [5] D. FitzGerald, “Upmixing from mono - a source separation ap- proach,” Proc. 17th International Conference on Digital Signal Processing, 2011. [6] D. FitzGerald, “The good vibrations problem,” 134th AES Convention, e-brief, 2013. [7] A. Krizhevsky, I. Sutskever, and G. E. Hinton, “Imagenet clas- siﬁcation with deep convolutional neural networks,” in Ad- vances in neural information processing systems, 2012, pp. 1097–1105. [8] C. Farabet, C. Couprie, L. Najman, and Y. LeCun, “Learning hierarchical features for scene labeling,” IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 35, no. 8, pp. 1915–1929, 2013. [9] G. Hinton, L. Deng, D. Yu, G. E. Dahl, A.-R. Mohamed, N. Jaitly, A. Senior, V. Vanhoucke, P. Nguyen, T. N. Sainath, et al., “Deep neural networks for acoustic modeling in speech recognition: The shared views of four research groups,” IEEE Signal Processing Magazine, vol. 29, no. 6, pp. 82–97, 2012. [10] E. M. Grais, M. U. Sen, and H. Erdogan, “Deep neu- ral networks for single channel source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Process- ing (ICASSP), pp. 3734–3738, 2014. [11] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Deep learning for monaural speech sepa- ration,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 1562–1566, 2014. [12] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Singing-voice separation from monaural recordings using deep recurrent neural networks,” Interna- tional Society for Music Information Retrieval Conference (ISMIR), 2014. [13] X. Glorot, A. Bordes, and Y. Bengio, “Deep sparse rectiﬁer networks,” Proceedings of the 14th International Conference on Artiﬁcial Intelligence and Statistics, vol. 15, pp. 315–323, 2011. [14] M. D. Zeiler, M. Ranzato, R. Monga, M. Mao, K. Yang, Q. V. Le, P. Nguyen, A. Senior, V. Vanhoucke, J. Dean, et al., “On rectiﬁed linear units for speech processing,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 3517–3521, 2013. [15] B. Yang, “A study of inverse short-time Fourier transform,” Proc. IEEE Conference on Acoustics, Speech, and Signal Pro- cessing (ICASSP), pp. 3541–3544, 2008. [16] P. Smaragdis and G. J. Mysore, “Separation by “humming”: User-guided sound extraction from monophonic mixtures,” IEEE Workshop on Applications of Signal Processing to Au- dio and Acoustics, pp. 69–72, 2009. [17] M. Spiertz and V. Gnann, “Source-ﬁlter based clustering for monaural blind source separation,” Proc. Int. Conference on Digital Audio Effects, 2009. [18] R. Jaiswal, D. FitzGerald, D. Barry, E. Coyle, and S. Rickard, “Clustering NMF basis functions using shifted NMF for monaural sound source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 245– 248, 2011. [19] P. C. Loizou, “Speech enhancement based on perceptually mo- tivated Bayesian estimators of the magnitude spectrum,” IEEE Transactions on Speech and Audio Processing, vol. 13, no. 5, pp. 857–869, 2005. [20] P. Vincent, H. Larochelle, Y. Bengio, and P.-A. Manzagol, “Ex- tracting and composing robust features with denoising autoen- coders,” Proceedings of the International Conference on Ma- chine Learning, pp. 1096–1103, 2008. [21] M. Chen, Z. Xu, K. Weinberger, and F. Sha, “Marginalized denoising autoencoders for domain adaptation,” Proceedings of the International Conference on Machine Learning, 2012. [22] J. Fritsch, “High quality musical audio source separation,” Master’s Thesis, UPMC / IRCAM / Telecom ParisTech, 2012. [23] E. Vincent, R. Gribonval, and C. Fevotte, “Performance mea- surement in blind audio source separation,” IEEE Transactions on Audio, Speech and Language Processing, vol. 14, no. 4, pp. 1462–1469, 2006. [24] P. Brady, “Matlab Mel ﬁlter implementation,” http://www.mathworks.com/matlabcentral/ fileexchange/23179-melfilter, 2014, [Online]. [25] F. Zheng, G. Zhang, and Z. Song, “Comparison of different implementations of MFCC,” Journal of Computer Science and Technology, vol. 16, no. 6, pp. 582–589, September 2001. [26] B. W. Bader and T. G. Kolda, “MATLAB tensor toolbox version 2.5,” http://www.sandia.gov/˜tgkolda/ TensorToolbox/, January 2012, [Online]. [27] B. W. Bader and T. G. Kolda, “Algorithm 862: MATLAB ten- sor classes for fast algorithm prototyping,” ACM Transactions on Mathematical Software, vol. 32, no. 4, pp. 635–653, De- cember 2006. [28] E. M. Grais and H. Erdogan, “Single channel speech music separation using nonnegative matrix factorization and spectral mask,” Digital Signal Processing (DSP), 2011 17th Interna- tional Conference on IEEE, pp. 1–6, 2011. [29] M. Goto, H. Hashiguchi, T. Nishimura, and R. Oka, “RWC Music Database: Music Genre Database and Musical Instru- ment Sound Database,” Proc. of the International Conference on Music Information Retrieval (ISMIR), pp. 229–230, 2003. 2139 View publication stats
-
-## Images
-
-### Image 1
-**Description:** small rectangular grayscale image (64x64)
-![Image 1](page_1_img_1_0f58f9aa.png)
-**Dimensions:** 64x64
-
-### Image 2
-**Description:** small rectangular color image (64x64)
-![Image 2](page_1_img_2_87e4f64c.png)
-**Dimensions:** 64x64
-
-### Image 3
-**Description:** small rectangular color image (64x64)
-![Image 3](page_1_img_3_1be6f0da.png)
-**Dimensions:** 64x64
-
-
-## Tables
-
-### Table 1
-| See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper · April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS READS 138 4,160 3 authors: Stefan Uhlich Franck Giron University of Stuttgart Sony Europe B.V., Zwg. Deutschland 67 PUBLICATIONS 1,229 CITATIONS 8 PUBLICATIONS 380 CITATIONS SEE PROFILE SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175 PUBLICATIONS 2,294 CITATIONS SEE PROFILE |  |
-| --- | --- |
-| All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file. |  |
-
-### Table 2
-| Instrument | Numberoffiles (=bVariations) | Materiallength |
-| --- | --- | --- |
-| Bassoon Cello Clarinet Horn Piano Saxophone Trumpet Viola Violin | 18 6 14 14 89 19 16 13 12 | 1.44hours 1.88hours 1.15hours 0.82hours 6.12hours 1.16hours 0.38hours 1.61hours 5.60hours |
-
-### Table 3
-| Instrument Output | After1stlayer SDR SIR SAR | After2ndlayer SDR SIR SAR | After3rdlayer SDR SIR SAR | After4thlayer SDR SIR SAR | After5thlayer SDR SIR SAR | Afterfinetuning SDR SIR SAR |
-| --- | --- | --- | --- | --- | --- | --- |
-| Rawoutput Horn WFoutput smharB Rawoutput Piano WFoutput Rawoutput Violin WFoutput | 3.30 4.79 9.93 4.05 5.63 10.25 | 5.15 8.19 8.73 6.36 10.20 9.08 | 5.29 8.50 8.69 6.51 10.81 8.87 | 5.38 8.66 8.69 6.58 10.99 8.87 | 5.53 9.19 8.47 6.71 11.44 8.79 | 5.70 9.57 8.44 6.80 11.68 8.79 |
-|  | 0.85 1.93 9.58 2.62 4.54 8.41 | 2.34 4.37 7.97 4.13 7.53 7.49 | 3.16 6.60 6.64 4.36 9.07 6.66 | 3.26 6.61 6.82 4.40 9.13 6.67 | 3.34 6.86 6.71 4.47 9.41 6.62 | 3.47 7.34 6.51 4.68 10.13 6.54 |
-|  | −0.23 1.88 6.11 3.62 8.57 5.86 | 3.06 9.52 4.63 5.27 14.10 6.05 | 3.49 9.21 5.33 6.04 15.19 6.74 | 3.50 9.23 5.34 6.08 15.30 6.76 | 3.57 9.44 5.33 6.02 15.36 6.68 | 3.90 10.34 5.41 6.11 15.60 6.75 |
-| Rawoutput Bassoon WFoutput reissuL Rawoutput Piano WFoutput Rawoutput Trumpet WFoutput | 3.05 5.48 7.82 4.38 7.55 7.94 | 3.47 6.51 7.32 4.40 9.38 6.53 | 3.62 7.00 7.07 4.36 9.71 6.30 | 3.68 7.14 7.04 4.42 9.75 6.36 | 3.72 7.31 6.96 4.34 9.75 6.26 | 3.39 7.08 6.60 3.92 9.37 5.85 |
-|  | 1.57 3.30 8.08 3.12 6.07 7.14 | 1.69 4.06 6.90 3.33 6.60 6.95 | 1.87 4.21 7.08 3.23 6.44 6.94 | 1.94 4.31 7.06 3.32 6.64 6.89 | 1.93 4.38 6.92 3.27 6.69 6.75 | 1.97 4.65 6.61 2.99 6.64 6.29 |
-|  | 5.01 9.37 7.47 6.00 10.18 8.49 | 6.28 11.26 8.25 7.14 12.86 8.71 | 6.61 11.67 8.51 7.38 13.55 8.77 | 6.56 11.54 8.52 7.23 13.43 8.62 | 6.55 11.57 8.49 7.22 13.49 8.58 | 6.38 11.49 8.27 7.23 13.54 8.57 |
-
-### Table 4
-| Instrument | MFCCkmeans[17] SDR SIR SAR | MelNMF[17] SDR SIR SAR | Shifted-NMF[18] SDR SIR SAR | DNNwithWF SDR SIR SAR |
-| --- | --- | --- | --- | --- |
-| Horn smharB Piano Violin Average | 3.87 5.76 9.41 3.30 4.42 10.76 −8.35 −7.89 10.21 | 4.17 5.83 10.17 −0.10 0.21 14.39 9.69 19.79 10.19 | 2.95 3.34 15.20 3.78 5.59 9.50 7.66 10.96 10.74 | 6.80 11.68 8.79 4.68 10.13 6.54 6.11 15.60 6.75 |
-|  | −0.39 0.76 10.13 | 4.59 8.61 11.58 | 4.80 6.63 11.81 | 5.86 12.47 7.36 |
-| Bassoon reissuL Piano Trumpet Average | 1.85 11.67 2.61 4.66 6.28 10.64 −1.73 −1.29 12.18 | 0.15 0.75 11.72 4.56 8.00 7.83 8.46 18.12 9.05 | −0.83 −0.60 15.43 2.54 5.14 7.16 6.57 7.39 14.95 | 3.92 9.37 5.85 2.99 6.64 6.29 7.23 13.54 8.57 |
-|  | 1.59 5.55 8.48 | 4.39 8.96 9.53 | 2.76 3.98 12.51 | 4.71 9.85 6.90 |
-
-### Table 5
-|  |  |  |  |  | dedda r |  |  | dedda r |  |  | dedda r |  |  | gninut e |  | Piano Horn Violin |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-|  |  |  |  | dr | eyal |  | ht | eyal |  | ht | eyal |  |  | nif trat |  |  |
-|  |  |  |  |  | 3 |  |  | 4 |  |  | 5 |  |  | S |  |  |
-|  |  | d |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  | edda |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | d | reyal |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-
-
-## Mathematical Formulas
-
-### Formula 1
-```latex
-i=1 vi(n)
-```
-
-### Formula 2
-```latex
-\frac{8}{15}
-```
-
-### Formula 3
-```latex
-= s(n) + M X i
-```
-
-### Formula 4
-```latex
-=1 vi(n)
-```
-
-### Formula 5
-```latex
-2135 978-1-4673-6997-\frac{8}{15}/$31.00 2015 IEEE ICASSP 2015
-```
-
-### Formula 6
-```latex
-k = 1
-```
-
-### Formula 7
-```latex
-k=1
-```
-
-### Formula 8
-```latex
-p=1
-```
-
-### Formula 9
-```latex
-b= Variations) Bassoon 18 1
-```
-
-### Formula 10
-```latex
-i = 1
-```
-
-### Formula 11
-```latex
-i=1
-```
-
-### Formula 12
-```latex
-> 0 in order to make it independent of different amplitude levels of the mixture x(n) where
-```
-
-### Formula 13
-```latex
-1 = max (Wkxk + bk
-```
-
-### Formula 14
-```latex
-i o with i = 1
-```
-
-### Formula 15
-```latex
-= 1
-```
-
-### Formula 16
-```latex
-M X i=1
-```
-
-### Formula 17
-```latex
-Mixture x(n) ..
-```
-
-### Formula 18
-```latex
-,˜s(P )o and n ˜v(1) i ,
-```
-
-### Formula 19
-```latex
-, ˜v(P ) i o with i = 1,
-```
-
-### Formula 20
-```latex
-, M where ˜s(p)\inC(2C+1)Land ˜v(p) i \inC(2C+1)L, i.e., they also contain the 2C neighboring frames
-```
-
-### Formula 21
-```latex
-These are now combined to form the DNN input/targets, i.e., x(p)= 1 \gamma(p) \alpha(p)˜s(p) + M X i=1 \alpha(p) i ˜v(p) i , (3a) 2136
-```
-
-### Formula 22
-```latex
-i=1
-```
-
-### Formula 23
-```latex
-S = 0    0 I 0    0
-```
-
-### Formula 24
-```latex
-p=1 s(p)
-```
-
-### Formula 25
-```latex
-k = 1 or the output of the (k
-```
-
-### Formula 26
-```latex
-p=1
-```
-
-### Formula 27
-```latex
-k = CsxC
-```
-
-### Formula 28
-```latex
-k= s
-```
-
-### Formula 29
-```latex
-x = P X p
-```
-
-### Formula 30
-```latex
-s =1 P PP p
-```
-
-### Formula 31
-```latex
-k = 1 P PP p
-```
-
-### Formula 32
-```latex
-L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 33
-```latex
-L = 3591 elements and corresponds to 224 milliseconds of the mixture signal
-```
-
-### Formula 34
-```latex
-P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 35
-```latex
-> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in
-```
-
-### Formula 36
-```latex
-PM i=1
-```
-
-### Formula 37
-```latex
-= arg min Wk
-```
-
-### Formula 38
-```latex
-bk P X p=1 s(p)
-```
-
-### Formula 39
-```latex
-k denotes either the pth DNN input for k = 1 or the output of the (k
-```
-
-### Formula 40
-```latex
-form and the solution is given by Winit k = CsxC
-```
-
-### Formula 41
-```latex
-binit k= s
-```
-
-### Formula 42
-```latex
-with Csx = P X p
-```
-
-### Formula 43
-```latex
-=1  s(p)
-```
-
-### Formula 44
-```latex
-Cxx = P X p
-```
-
-### Formula 45
-```latex
-=1  x(p) k
-```
-
-### Formula 46
-```latex
-and s =1 P PP p
-```
-
-### Formula 47
-```latex
-=1s(p)
-```
-
-### Formula 48
-```latex
-xk = 1 P PP p
-```
-
-### Formula 49
-```latex
-=1x(p) k
-```
-
-### Formula 50
-```latex
-we have L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 51
-```latex
-= 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN
-```
-
-### Formula 52
-```latex
-we use P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 53
-```latex
-3000 = 6000 L-BFGS iterations
-```
-
-### Formula 54
-```latex
-s(p)=\alpha(p) \gamma(p) S ˜s(p) , (3b) where \gamma(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in \alpha(p)˜s(p) + PM i=1\alpha(p) i ˜v(p) i and S \inRL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0
-```
-
-### Formula 55
-```latex
-The scalars \alpha(p), \alpha(p) 1,
-```
-
-### Formula 56
-```latex
-The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k
-```
-
-### Formula 57
-```latex
-., {Wk, bk}
-```
-
-### Formula 58
-```latex
-J = (PP p
-```
-
-### Formula 59
-```latex
-p=1
-```
-
-### Formula 60
-```latex
-J = 0
-```
-
-### Formula 61
-```latex
-2 the evolution of the normalized DNN training error J = (PP p
-```
-
-### Formula 62
-```latex
-=1
-```
-
-### Formula 63
-```latex
-PP p=1
-```
-
-### Formula 64
-```latex
-we have an initial error of J = 0
-```
-
-### Formula 65
-```latex
-we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1
-```
-
-### Formula 66
-```latex
-= 0
-```
-
-### Formula 67
-```latex
-2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec
-```
-
-### Formula 68
-```latex
-REFERENCES [1] P
-```
-
-### Formula 69
-```latex
-[2] G
-```
-
-### Formula 70
-```latex
-[3] Z
-```
-
-### Formula 71
-```latex
-[4] J.-L
-```
-
-### Formula 72
-```latex
-[5] D
-```
-
-### Formula 73
-```latex
-[6] D
-```
-
-### Formula 74
-```latex
-[7] A
-```
-
-### Formula 75
-```latex
-[8] C
-```
-
-### Formula 76
-```latex
-[9] G
-```
-
-### Formula 77
-```latex
-[10] E
-```
-
-### Formula 78
-```latex
-[11] P.-S
-```
-
-### Formula 79
-```latex
-[12] P.-S
-```
-
-### Formula 80
-```latex
-[13] X
-```
-
-### Formula 81
-```latex
-[14] M
-```
-
-### Formula 82
-```latex
-[15] B
-```
-
-### Formula 83
-```latex
-[16] P
-```
-
-### Formula 84
-```latex
-[17] M
-```
-
-### Formula 85
-```latex
-[18] R
-```
-
-### Formula 86
-```latex
-[19] P
-```
-
-### Formula 87
-```latex
-[20] P
-```
-
-### Formula 88
-```latex
-[21] M
-```
-
-### Formula 89
-```latex
-[22] J
-```
-
-### Formula 90
-```latex
-[23] E
-```
-
-### Formula 91
-```latex
-[24] P
-```
-
-### Formula 92
-```latex
-[25] F
-```
-
-### Formula 93
-```latex
-[26] B
-```
-
-### Formula 94
-```latex
-[27] B
-```
-
-### Formula 95
-```latex
-[28] E
-```
-
-### Formula 96
-```latex
-[29] M
-```
-
+#### Formula 1
+$$
+z = (z_1)
+$$
+
+#### Formula 2
+$$
+to a sequence of continuous representations z = (z_1)
+$$
+
+#### Formula 3
+$$
+N = 6 \text{ identical layers}
+$$
+
+#### Formula 4
+$$
+l = 512
+$$
+
+#### Formula 5
+$$
+\text{The encoder is composed of a stack of } N = 6 \text{ identical layers}
+$$
+
+#### Formula 6
+$$
+\text{produce outputs of dimension } d_{model} = 512
+$$
+
+#### Formula 7
+$$
+\text{The decoder is also composed of a stack of } N = 6 \text{ identical layers}
+$$
+
+#### Formula 8
+$$
+k = P_{dk} i
+$$
+
+#### Formula 9
+$$
+= \text{softmax}(QK^T)
+$$
+
+#### Formula 10
+$$
+q \cdot k = \sum_{i=1}^{dk} q_i k_i
+$$
+
+#### Formula 11
+$$
+= 1 \cdot q_i k_i
+$$
+
+#### Formula 12
+$$
+i = \text{Attention}(QW^Q_i, KW^K_i, V W^V_i)
+$$
+
+#### Formula 13
+$$
+h = 8 \text{ parallel attention layers}
+$$
+
+#### Formula 14
+$$
+k = dv
+$$
+
+#### Formula 15
+$$
+h = 64
+$$
+
+#### Formula 16
+$$
+l = 512
+$$
+
+#### Formula 17
+$$
+f = 2048
+$$
+
+#### Formula 18
+$$
+\sqrt{d_{model}} = 5
+$$
+
+#### Formula 19
+$$
+= \text{Concat}(head_1, \ldots, head_h)
+$$
+
+#### Formula 20
+$$
+W_O \text{ where } head_i = \text{Attention}(QW^Q_i, KW^K_i, V W^V_i)
+$$
+
+#### Formula 21
+$$
+\text{In this work we employ } h = 8 \text{ parallel attention layers}
+$$
+
+#### Formula 22
+$$
+\text{For each of these we use } dk = dv
+$$
+
+#### Formula 23
+$$
+= \frac{d_{model}}{h}
+$$
+
+#### Formula 24
+$$
+= 64
+$$
+
+#### Formula 25
+$$
+= \max(0, xW_1 + b_1)W_2 + b_2
+$$
+
+#### Formula 26
+$$
+\text{The dimensionality of input and output is } d_{model} = 512
+$$
+
+#### Formula 27
+$$
+\text{layer has dimensionality } d_{ff} = 2048
+$$
+
+#### Formula 28
+$$
+= \sin\left(\frac{pos}{10000^{2i/d_{model}}}\right)
+$$
+
+#### Formula 29
+$$
+= \cos\left(\frac{pos}{10000^{2i/d_{model}}}\right) \text{ where } pos \text{ is the position and } i \text{ is the dimension}
+$$
+
+#### Formula 30
+$$
+k = n
+$$
+
+#### Formula 31
+$$
+e = d
+$$
+
+#### Formula 32
+$$
+s = 4000
+$$
+
+#### Formula 33
+$$
+p_{num}
+$$
+
+#### Formula 34
+$$
+p_{steps}
+$$
+
+#### Formula 35
+$$
+\text{Even with } k = n
+$$
+
+#### Formula 36
+$$
+1 = 0
+$$
+
+#### Formula 37
+$$
+2 = 0
+$$
+
+#### Formula 38
+$$
+= 10
+$$
+
+#### Formula 39
+$$
+lrate = d^{-0.5} \min(step_{num}^{-0.5}, step_{num} \cdot warmup_{steps}^{-1.5})
+$$
+
+#### Formula 40
+$$
+steps = 4000
+$$
+
+#### Formula 41
+$$
+p = 0
+$$
+
+#### Formula 42
+$$
+s = 0
+$$
+
+#### Formula 43
+$$
+\frac{1}{4}
+$$
+
+#### Formula 44
+$$
+l = 1024 \text{ on the Wall Street Journal (WSJ) portion of the Penn Treebank}
+$$
+
+#### Formula 45
+$$
+\text{layer transformer with } d_{model} = 1024 \text{ on the Wall Street Journal (WSJ) portion of the Penn Treebank}
+$$
+
+#### Formula 46
+$$
+(2013) [40] \text{ semi-supervised } 91.3 \text{ Huang & Harper (2009) } [14] \text{ semi-supervised } 91.3 \text{ McClosky et al}
+$$
+
+#### Formula 47
+$$(2015) [23] \text{ multi-task } 93.0 \text{ Dyer et al}$$
+
+#### Formula 48
+$$
+[10] \text{ Alex Graves}
+$$
+
+#### Formula 49
+$$
+[23] \text{ Minh-Thang Luong, Quoc V}
+$$
 
 ## Forms and Fields
 
@@ -6344,570 +559,794 @@ REFERENCES [1] P
 
 ### Form 5
 
+### Form 6
+
+### Form 7
+
+### Form 8
+
+### Form 9
+
+### Form 10
+
+### Form 11
+
+### Form 12
+
+### Form 13
+
+### Form 14
 
 
+# Comprehensive Document Outline
 
+## Introduction
 
-### Forms
+Provided proper attribution is provided, Google hereby grants permission to reproduce the tables and figures in this paper solely for use in journalistic or scholarly works. 
 
-# test_document
-*Converted from PDF using PPARSER*
+Attention Is All You Need  
+Ashish Vaswani¹ Google Brain  
+avaswani@google.com  
+Noam Shazeer¹ Google Brain  
+noam@google.com  
+Niki Parmar¹ Google Research  
+nikip@google.com  
+Jakob Uszkoreit¹ Google Research  
+usz@google.com  
+Llion Jones¹ Google Research  
+llion@google.com  
+Aidan N. Gomez¹² University of Toronto  
+aidan@cs.toronto.edu  
+Łukasz Kaiser¹ Google Brain  
+lukaszkaiser@google.com  
+Illia Polosukhin¹³ illia.polosukhin@gmail.com  
 
-## Table of Contents
+**Abstract**  
+The dominant sequence transduction models are based on complex recurrent or convolutional neural networks that include an encoder and a decoder. The best performing models also connect the encoder and decoder through an attention mechanism. We propose a new simple network architecture, the Transformer, based solely on attention mechanisms, dispensing with recurrence and convolutions entirely. Experiments on two machine translation tasks show these models to be superior in quality while being more parallelizable and requiring significantly less time to train. Our model achieves 28.4 BLEU on the WMT 2014 English-to-German translation task, improving over the existing best results, including ensembles, by over 2 BLEU. On the WMT 2014 English-to-French translation task, our model establishes a new single-model state-of-the-art BLEU score of 41.8 after training for 3.5 days on eight GPUs, a small fraction of the training costs of the best models from the literature. We show that the Transformer generalizes well to other tasks by applying it successfully to English constituency parsing both with large and limited training data. 
+
+¹ Equal contribution. Listing order is random.  
+² Work performed while at Google Brain.  
+³ Work performed while at Google Research.  
+
+31st Conference on Neural Information Processing Systems (NIPS 2017), Long Beach, CA, USA. arXiv:1706.03762v7 [cs.CL] 2 Aug 2023
+
+---
+
+## Results
+
+### Tables and Figures
+
+#### Table of Contents
 - [Content](#content)
 - [Images](#images)
 - [Tables](#tables)
 - [Formulas](#formulas)
 - [Forms](#forms)
 
-## Content
-See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper  April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS 138 READS 4,160 3 authors: Stefan Uhlich University of Stuttgart 67PUBLICATIONS1,229CITATIONS SEE PROFILE Franck Giron Sony Europe B.V., Zwg. Deutschland 8PUBLICATIONS380CITATIONS SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175PUBLICATIONS2,294CITATIONS SEE PROFILE All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file.
-DEEP NEURAL NETWORK BASED INSTRUMENT EXTRACTION FROM MUSIC Stefan Uhlich1, Franck Giron1and Yuki Mitsufuji2 1 Sony European Technology Center (EuTEC), Stuttgart, Germany 2 Sony Corporation, Audio Technology Development Department, Tokyo, Japan ABSTRACT This paper deals with the extraction of an instrument from music by using a deep neural network. As prior information, we only as- sume to know the instrument types that are present in the mixture and, using this information, we generate the training data from a database with solo instrument performances. The neural network is built up from rectiﬁed linear units where each hidden layer has the same number of nodes as the output layer. This allows a least squares initialization of the layer weights and speeds up the training of the network considerably compared to a traditional random initializa- tion. We give results for two mixtures, each consisting of three in- struments, and evaluate the extraction performance using BSS Eval for a varying number of hidden layers. Index Terms— Deep neural network (DNN), Instrument extrac- tion, Blind source separation (BSS) 1. INTRODUCTION In this paper, we study the extraction of a target instrument s(n) ∈R from an instantaneous, monaural music mixture x(n) ∈R, i.e., of a mixture that can be written as x(n) = s(n) + M X i=1 vi(n), (1) where vi(n) is the time signal of the ith background instrument and the mixture consists thus in a total of M +1 instruments. From x(n) we want to extract an estimate ˆs(n) of the target instrument s(n) and, therefore, we can see instrument extraction as a special case of the general blind source separation (BSS) problem [1, 2]. Various applications require such an estimate ˆs(n) ranging from Karaoke systems which use a separation into a instruments and a vocal track, see [3, 4], to upmixing where one tries to obtain a multi-channel version of the monaural mixture x(n), see [5,6]. We propose a deep neural network (DNN) for the extraction of the target instrument s(n) from x(n) as DNNs have proved to work very well in various applications and have gained a lot of interest in the last years, especially for classiﬁcation tasks in image process- ing [7, 8] and for speech recognition [9]. We use the DNN in the frequency domain to estimate a target instrument from the mixture, i.e., we train the network such that we can think of it as a “denoiser” which converts the “noisy” mixture spectrogram to the “clean” in- strument spectrogram. For the training of the network, we only as- sume to know the instrument types of the target instrument s(n) and of the other background instruments v1(n), . . . , vM(n), for exam- ple that we want to extract a piano from a mixture with a violin and a horn. This is in contrast to other proposed DNN approaches for BSS of music which are supervised in the sense that they assume to have more knowledge about the signals [10–12]. Huang et. al. used in [11, 12] a deep (recurrent) neural network for the separa- tion of two sources where the neural network is extended by a ﬁnal softmask layer to extract the source estimates and it is trained using a discriminative cost function that also tries to decrease the interfer- ence by other sources. Whereas they only know the type of the target instrument (in their case: singing voice) in [12], they assume that the background is one of 110 known karaoke songs. In contrast, we only know the instrument types that appear in the mixture and, hence, we have to use a large instrument database with solo performances from various musicians and instruments. From this database, we generate the training data that allows us to generalize to new mixtures and this instrument database with the training data generation is thus a integral part of our DNN architecture. A second contribution of the paper is the efﬁcient training of the DNN: We propose a network architecture where each hidden rectiﬁed linear unit (ReLU) layer has the same number of nodes as the output layer. This allows a least squares initialization of the network weights of each layer and, using it as starting point for the limited-memory BFGS (L-BFGS) optimizer, yields a quicker convergence to good network weights. Additionally, we noticed that this initialization often results in ﬁnal network weights which have a smaller training error than if we start the training from randomly initialized weights as we ﬁnd better local minima. The remainder of this paper is organized as follows: In Sec. 2 we describe in detail the DNN based instrument extraction where in particular Sec. 2.1 explains the network structure, Sec. 2.2 shows the generation of the training data and Sec. 2.3 details the layer-wise training procedure. In Sec. 3, we give results for two music mixtures, each consisting of three instruments, before we conclude this paper in Sec. 4 where we summarize our work and give an outlook of future steps. The following notation is used throughout this paper: x denotes a column vector and X a matrix where in particular I is the identity matrix. The matrix transpose and Euclidean norm are denoted by (.)Tand ∥.∥, respectively. Furthermore, max (x, y) is the element- wise maximum operation between x and y, and |x| returns a vector with the element-wise magnitude values of x. 2. DNN BASED INSTRUMENT EXTRACTION 2.1. General Network Structure We will explain now the proposed DNN approach for extracting the target instrument s(n) from the mixture x(n), which is also depicted in Fig. 1. The extraction is done in the frequency domain and it consists of the following three steps: (a) Feature vector generation: We use a short-time Fourier trans- form (STFT) with (possibly overlapping) rectangular windows to transform the mixture signal x(n) into the frequency domain. From this frequency representation, we build a feature vector1 x ∈R(2C+1)Lby stacking the magnitude values of the current frame and the C preceding/succeeding frames where L gives the number of magnitude values per frame. The motivation for using also the 2C neighboring frames is to provide the DNN with tem- poral context that allows it to better extract the target instrument. Please note that these context frames are chosen such that they are 1For convenience, we use in the following a simpliﬁed notation and drop the frame index for x, xk, s, ˆx and γ. 2135 978-1-4673-6997-8/15/$31.00 2015 IEEE ICASSP 2015
-Mixture x(n) ... STFT ... Magnitude STFT frames of x(n) DNN input x ∈R(2C+1)L normalized by γ W1, b1 W2, b2    WK, bK DNN with K ReLU layers DNN output ˆs ∈RL rescaled with γ ... Magnitude STFT frames of ˆs(n) ISTFT ... Recovered instrument ˆs(n) Fig. 1: Instrument extraction using a deep neural network non-overlapping2. Finally, the input vector x is normalized by a scalar γ > 0 in order to make it independent of different amplitude levels of the mixture x(n) where γ is the average Euclidean norm of the 2C + 1 magnitude frames in x. (b) DNN instrument extraction: In a second step, the normalized STFT amplitude vector x is fed to a DNN, which consists of K layers with rectiﬁed linear units (ReLU), i.e., we have xk+1 = max (Wkxk + bk, 0) , k = 1, . . . , K (2) where xk denotes the input to the kth layer and in particular x1 is the DNN input x and xK+1 the DNN output ˆs. Each ReLU layer has L nodes and the network weights {Wk, bk}k=1,...,K are trained such that the DNN outputs an estimate ˆs of the magnitude frame s ∈RL of the target instrument from the mixture vector x. We can thus think of the DNN performing a denoising of the “noisy” mixture input. DNNs with ReLU activation functions have shown very good results, see for example [13, 14], and, as each layer has L hidden units, this activation function will allow us to use a layer-wise least squares initialization as will be shown in Sec. 2.3. (c) Reconstruction of the instrument: Using the phase of the original mixture STFT and multiplying each DNN output ˆs with the energy normalization γ that was applied to the corresponding input vector, we obtain an estimate of the STFT of the target instrument s(n), which we convert back into the time domain using an inverse STFT [15]. Note that the DNN outputs ˆs, i.e., the magnitude frames of the target instrument, will be overlapping as shown in Fig. 1 if the STFT in the ﬁrst step (a) was also using overlapping windows. Please refer to [15] for the ISTFT in this case. 2.2. Training Data Generation In order to train the weights {W1, b1}, . . . , {WK, bK} of the DNN, we need a training set {x(p), s(p)}p=1,...,P of P input/target pairs where x(p)∈R(2C+1)Lis a magnitude vector of the mixture with C preceding/succeeding frames and s(p)∈RLthe corre- sponding magnitude vector of the target instrument that we want to extract. In general, there are several possibilities to generate the required material for the DNN training, which differ in the prior knowledge that we have3: For the target instrument s(n), we either only know the instrument type (e.g., piano) or we have recordings from it. For the background instruments vi(n), we either have no knowledge, we know the instrument types that occur in the mixture or we even have 2E.g., if the STFT uses a overlap of 50%, then we only take every second frame to build the feature vector x. 3Beside the discussed cases, there is also the possibility that we have knowledge about the melody of the target instrument, see for example [16]. Instrument Number of ﬁles Material length (b= Variations) Bassoon 18 1.44 hours Cello 6 1.88 hours Clarinet 14 1.15 hours Horn 14 0.82 hours Piano 89 6.12 hours Saxophone 19 1.16 hours Trumpet 16 0.38 hours Viola 13 1.61 hours Violin 12 5.60 hours Table 1: Instrument database recordings of the particular instruments that occur in the mixture. The easiest case is when we have recordings of the instrument that we want to extract and of those that occur as background in the mix- ture. The most difﬁcult case is when we only know the type of the instrument that we want to extract and do not have any knowledge about the background instruments that will appear in the mixture. In this paper, we assume that we know the instrument types of the tar- get and background, e.g., we know that we want to extract a piano from a mixture with a horn and a violin. Using this prior knowl- edge is reasonable since for many songs, we either have metadata which provides information about the instruments that occur or, in case this information is missing, could be provided by the user. As we only know the instrument types that appear in the mixture, we built a musical instrument database, see Table 1 for the details. The music pieces are stored in the free lossless audio codec (FLAC) for- mat with a sampling rate of 48kHz and contain solo performances of the instruments. For each instrument type we have several ﬁles stemming from different musicians with different instruments play- ing classical masterpieces. These variations are important as we only know the instrument types and, hence, the DNN should generalize well to new instruments of the same type. For the DNN training, we ﬁrst load from the instrument database all audio ﬁles of the instruments that occur in the mixture and resam- ple them to a lower DNN system sampling rate, where the sampling rate is chosen such that the computational complexity of the total DNN system is reduced. In a second step, we convert all signals into the frequency domain using a STFT and randomly sample from the target and background instruments P complex-valued STFT vectors n ˜s(1), . . . ,˜s(P )o and n ˜v(1) i , . . . , ˜v(P ) i o with i = 1, . . . , M where ˜s(p)∈C(2C+1)Land ˜v(p) i ∈C(2C+1)L, i.e., they also contain the 2C neighboring frames. These are now combined to form the DNN input/targets, i.e., x(p)= 1 γ(p) α(p)˜s(p) + M X i=1 α(p) i ˜v(p) i , (3a) 2136
-s(p)=α(p) γ(p) S ˜s(p) , (3b) where γ(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in α(p)˜s(p) + PM i=1α(p) i ˜v(p) i and S ∈RL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0 . The scalars α(p), α(p) 1, . . . , α(p) Mdenote the random amplitudes of each instru- ment which stem from a uniform distribution with support [0.01, 1]. The normalization γ(p)is used to yield a DNN input that is inde- pendent of different amplitude levels of the mixture. Please note, however, that each instrument inside the mixture has a different amplitude α(p), α(p) 1, . . . , α(p) M, i.e., the DNN learns to extract the target instrument even if it has a varying amplitude compared to the background instruments. 2.3. DNN Training Using the dataset that we generated as outlined above, we can learn the network weights such that the sum-of-squared errors (SSE) be- tween the P targets s(p)and the DNN outputs ˆs(p)is minimized4. Due to the special network structure and the use of ReLU (cf. Sec. 2.1), we can perform a layer-wise training of the DNN. Each time a new layer is added, we ﬁrst initialize the weights using least squares estimates of Wk and bk by neglecting the nonlinear rectiﬁer function. As the target vectors s(p)are non-negative, we know that the SSE after adding the ReLU activation function can not increase and, hence, using the least-squares solution as initialization results in a good starting point for the L-BFGS solver that we then use. In the following, we will now describe in more details the two steps that we perform if a new layer is added: (a) Weight initialization: For the kth layer, we solve the optimization problem {Winit k, binit k} = arg min Wk,bk P X p=1 s(p) −  Wkx(p) k + bk  2 (4) where x(p) k denotes either the pth DNN input for k = 1 or the output of the (k −1)th layer if k > 1. Using (4), we choose the initial weights of the network such that they are the optimal linear least squares reconstruction of the targets {s(p)}p=1,...,P from the fea- tures {x(p) k}p=1,...,P . As we know that all elements of the target vector s(p)are non-negative, it is obvious that the total error can not increase by adding the ReLU activation function and, therefore, this initialization is a good starting point for the iterative training in step (b). The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k. (b) L-BFGS training: Starting from the initialization (a), we use a L-BFGS training with the SSE cost function to update the complete network, i.e., to update {W1, b1}, . . ., {Wk, bk}. 4We also tested the weighted Euclidean distance [19] as it showed good results for speech enhancement. However, we could not see an improvement and therefore use the SSE cost function in the following. These two steps are done K times in order to result in a network with K ReLU layers. Finally, after adding all layers, we do a ﬁne tuning of the complete network, where we again use L-BFGS. Using this procedure, we train the DNN as a denoising network as each layer, when it is added to the network, tries to recover the original targets s(p)from the output of the previous layer. This is similar to stacked denoising autoencoders, see [20, 21]. In our ex- periments, we have noticed that using the least squares initialization is advantageous with respect to the following two aspects if com- pared to a random initialization: First, it reduces the training time for the network considerably as we start the L-BFGS optimizer from a good initial value and, second, we found that we do not have the problem of converging to poor local minima which was sometimes the case for the random initialization. In the next section, we will show the beneﬁt of using the proposed initialization. 3. SEPARATION RESULTS In the following, we will now give results for the proposed DNN ap- proach. We consider two monaural music mixtures from the TRIOS dataset [22], each composed of three instruments: the “Brahms” trio consisting of a horn, a piano and a violin and the “Lussier” trio with a bassoon, a piano and a trumpet. We use the following settings for our experiments: The DNN system sampling rate (cf. Sec. 2.2) was chosen to be 32kHz which is a compromise between the audio quality of the extracted instru- ment and the DNN training time. For each frame, we have L = 513 magnitude values and we augment the input vector by C = 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN. Hence, one DNN input vector x has a length of (2C + 1)L = 3591 elements and corresponds to 224 milliseconds of the mixture signal. For the training, we use P = 106samples and the gen- erated training material has thus a length of 62.2 hours. During the layerwise training, we use 600 L-BFGS iterations for each new layer and the ﬁnal ﬁne tuning consists of 3000 additional L-BFGS iterations for the complete network such that in total we execute 5  600 + 3000 = 6000 L-BFGS iterations. Table 2 shows the BSS Eval values [23], i.e., the signal-to- distortion ratio (SDR), signal-to-interference ratio (SIR) and signal- to-artifact ratio (SAR) values after the addition of each ReLU layer. Besides the raw DNN outputs, we also give the BSS Eval values if we use a Wiener ﬁlter to combine the DNN outputs of the three instruments. This additional post-processing step allows an en- hancement of the source separation results since, from the raw DNN outputs, it computes for each instrument a softmask and applies it to the original mixture spectrogram. Looking at the results in Table 2, we can see that there is a noticeable improvement when adding the ﬁrst three layers but the difference becomes smaller for additional layers. For “Brahms”, the best results are obtained after adding all ﬁve layers and performing the ﬁnal ﬁne tuning. This is different for “Lussier”: For the trumpet, we can see that the network is starting to overﬁt to the training set when adding more than three layers as the SDR/SIR values start to decrease. The problem is the limited amount of material for the trumpet (22.5 minutes of solo performances, see Table 1), which is too small. Interestingly, also the DNNs for the other two instruments start to overﬁt which is probably also due to the trumpet in the mixture. From the results we can conclude that having sufﬁcient material for each instrument is vital if only the instrument type is known since only this ensures a good source separation quality and avoids overﬁtting. Table 3 shows for comparison the BSS Eval results for three unsupervised NMF based source separation approaches: • “MFCC kmeans [17]”: This approach uses a Mel ﬁlter bank of size 30 which is applied to the frequency basis vectors of the NMF decomposition in order to compute MFCCs. These are 2137
-Instrument Output After 1st layer After 2nd layer After 3rd layer After 4th layer After 5th layer After ﬁne tuning SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn Raw output 3.30 4.79 9.93 5.15 8.19 8.73 5.29 8.50 8.69 5.38 8.66 8.69 5.53 9.19 8.47 5.70 9.57 8.44 WF output 4.05 5.63 10.25 6.36 10.20 9.08 6.51 10.81 8.87 6.58 10.99 8.87 6.71 11.44 8.79 6.80 11.68 8.79 Piano Raw output 0.85 1.93 9.58 2.34 4.37 7.97 3.16 6.60 6.64 3.26 6.61 6.82 3.34 6.86 6.71 3.47 7.34 6.51 WF output 2.62 4.54 8.41 4.13 7.53 7.49 4.36 9.07 6.66 4.40 9.13 6.67 4.47 9.41 6.62 4.68 10.13 6.54 Violin Raw output −0.23 1.88 6.11 3.06 9.52 4.63 3.49 9.21 5.33 3.50 9.23 5.34 3.57 9.44 5.33 3.90 10.34 5.41 WF output 3.62 8.57 5.86 5.27 14.10 6.05 6.04 15.19 6.74 6.08 15.30 6.76 6.02 15.36 6.68 6.11 15.60 6.75 Lussier Bassoon Raw output 3.05 5.48 7.82 3.47 6.51 7.32 3.62 7.00 7.07 3.68 7.14 7.04 3.72 7.31 6.96 3.39 7.08 6.60 WF output 4.38 7.55 7.94 4.40 9.38 6.53 4.36 9.71 6.30 4.42 9.75 6.36 4.34 9.75 6.26 3.92 9.37 5.85 Piano Raw output 1.57 3.30 8.08 1.69 4.06 6.90 1.87 4.21 7.08 1.94 4.31 7.06 1.93 4.38 6.92 1.97 4.65 6.61 WF output 3.12 6.07 7.14 3.33 6.60 6.95 3.23 6.44 6.94 3.32 6.64 6.89 3.27 6.69 6.75 2.99 6.64 6.29 Trumpet Raw output 5.01 9.37 7.47 6.28 11.26 8.25 6.61 11.67 8.51 6.56 11.54 8.52 6.55 11.57 8.49 6.38 11.49 8.27 WF output 6.00 10.18 8.49 7.14 12.86 8.71 7.38 13.55 8.77 7.23 13.43 8.62 7.22 13.49 8.58 7.23 13.54 8.57 Table 2: BSS Eval results for DNN instrument extraction (“Brahms” and “Lussier” trio, all values are given in dB) Instrument MFCC kmeans [17] Mel NMF [17] Shifted-NMF [18] DNN with WF SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn 3.87 5.76 9.41 4.17 5.83 10.17 2.95 3.34 15.20 6.80 11.68 8.79 Piano 3.30 4.42 10.76 −0.10 0.21 14.39 3.78 5.59 9.50 4.68 10.13 6.54 Violin −8.35 −7.89 10.21 9.69 19.79 10.19 7.66 10.96 10.74 6.11 15.60 6.75 Average −0.39 0.76 10.13 4.59 8.61 11.58 4.80 6.63 11.81 5.86 12.47 7.36 Lussier Bassoon 1.85 11.67 2.61 0.15 0.75 11.72 −0.83 −0.60 15.43 3.92 9.37 5.85 Piano 4.66 6.28 10.64 4.56 8.00 7.83 2.54 5.14 7.16 2.99 6.64 6.29 Trumpet −1.73 −1.29 12.18 8.46 18.12 9.05 6.57 7.39 14.95 7.23 13.54 8.57 Average 1.59 5.55 8.48 4.39 8.96 9.53 2.76 3.98 12.51 4.71 9.85 6.90 Table 3: Comparison of BSS Eval results (all values are given in dB) then clustered via kmeans. For the Mel ﬁlter bank, we use the implementation [24] of [25]. • “Mel NMF [17]”: This approach also applies a Mel ﬁlter bank of size 30 to the original frequency basis vectors and uses a sec- ond NMF to perform the clustering. • “Shifted-NMF [18]”: For this approach, we use a constant Q transform matrix with minimal frequency 55 Hz and 24 fre- quency bins per octave. The shifted-NMF decomposition is al- lowed to use a maximum of 24 shifts. The constant Q transform source code was kindly provided by D. FitzGerald and we use the Tensor toolbox [26,27] for the shifted-NMF implementation. The best SDR values in Table 3 are emphasized in bold face and we can observe that, although our DNN approach not always gives the best individual SDR per instrument, it has the best average SDR for both mixtures since it is capable of extracting three sources with similar quality. This is not the case for the NMF approaches which have one instrument with a low SIR value, i.e., one instrument that is not well separated from the others.5 In order to see the beneﬁt of the least squares initialization from Sec. 2.3 we show in Fig. 2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec. 2.2. The denominator of J gives the SSE of a baseline system where the DNN is perform- ing an identity transform. From Fig. 2 we can see that the error is signiﬁcantly decreased whenever a new layer is added as the error J exhibits downward “jumps”. These “jumps” are due to the least squares initialization of the network weights. For example, consider the training error in Fig. 2 of the network that extracts the piano: When the ﬁrst layer is added, we have an initial error of J = 0.23, which means that, using the least squares initialization from Sec. 2.3, we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1 = 0. Would we have used the 5Please note that the considered NMF approaches are only assuming to know the number of sources, i.e., they use less prior knowledge than our DNN approach. We also tried the supervised NMF approach from [28] where the frequency basis vectors are pre-trained on our instrument database. How- ever, this supervised NMF approach resulted in signiﬁcant worse SDR values as the learned frequency bases for the instruments are correlated which intro- duces interference. 600 1200 1800 2400 3000 6000 0.08 0.1 0.12 0.14 0.16 0.18 0.2 0.22 Number of L−BFGS iterations Normalized training error J 2nd layer added 3rd layer added 4th layer added 5th layer added Start fine tuning Piano Horn Violin Fig. 2: Evolution of training error for “Brahms” baseline initialization, then a simulation showed that it would have taken us 980 additional L-BFGS iterations to reach the error value of the least squares initialization. These L-BFGS iterations can be saved and, therefore, we converge much faster to a network with a good instrument extraction performance. 4. CONCLUSIONS AND FUTURE WORK In this paper, we used a deep neural network for the extraction of an instrument from music. Using only the knowledge of the instrument types, we generated the training data from a database with solo in- strument performances and the network is trained layer-wise with a least-squares initialization of the weights. During our experiments, we noticed that the material length and quality of the solo performances is important as only sufﬁcient ma- terial allows the neural network to generalize to new, i.e., before unseen, instruments. We therefore plan to incorporate the “RWC Music Instrument Sounds” database [29] as it contains high quality samples from many instruments. Furthermore, our data generation process in Sec. 2.2 currently does not exploit music theory when generating the mixtures and we think that, taking such knowledge into account, should generate training data that is better suited for the instrument extraction task. 2138
-5. REFERENCES [1] P. Comon and C. Jutten, Eds., Handbook of Blind Source Sep- aration: Independent Component Analysis and Applications, Academic Press, 2010. [2] G. R. Naik and W. Wang, Eds., Blind Source Separation: Advances in Theory, Algorithms and Applications, Springer, 2014. [3] Z. Raﬁi and B. Pardo, “Repeating pattern extraction technique (REPET): A simple method for music/voice separation,” IEEE Transactions on Audio, Speech, and Language Processing, vol. 21, no. 1, pp. 73–84, 2013. [4] J.-L. Durrieu, B. David, and G. Richard, “A musically moti- vated mid-level representation for pitch estimation and musical audio source separation,” IEEE Journal on Selected Topics on Signal Processing, vol. 5, pp. 1180–1191, 2011. [5] D. FitzGerald, “Upmixing from mono - a source separation ap- proach,” Proc. 17th International Conference on Digital Signal Processing, 2011. [6] D. FitzGerald, “The good vibrations problem,” 134th AES Convention, e-brief, 2013. [7] A. Krizhevsky, I. Sutskever, and G. E. Hinton, “Imagenet clas- siﬁcation with deep convolutional neural networks,” in Ad- vances in neural information processing systems, 2012, pp. 1097–1105. [8] C. Farabet, C. Couprie, L. Najman, and Y. LeCun, “Learning hierarchical features for scene labeling,” IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 35, no. 8, pp. 1915–1929, 2013. [9] G. Hinton, L. Deng, D. Yu, G. E. Dahl, A.-R. Mohamed, N. Jaitly, A. Senior, V. Vanhoucke, P. Nguyen, T. N. Sainath, et al., “Deep neural networks for acoustic modeling in speech recognition: The shared views of four research groups,” IEEE Signal Processing Magazine, vol. 29, no. 6, pp. 82–97, 2012. [10] E. M. Grais, M. U. Sen, and H. Erdogan, “Deep neu- ral networks for single channel source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Process- ing (ICASSP), pp. 3734–3738, 2014. [11] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Deep learning for monaural speech sepa- ration,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 1562–1566, 2014. [12] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Singing-voice separation from monaural recordings using deep recurrent neural networks,” Interna- tional Society for Music Information Retrieval Conference (ISMIR), 2014. [13] X. Glorot, A. Bordes, and Y. Bengio, “Deep sparse rectiﬁer networks,” Proceedings of the 14th International Conference on Artiﬁcial Intelligence and Statistics, vol. 15, pp. 315–323, 2011. [14] M. D. Zeiler, M. Ranzato, R. Monga, M. Mao, K. Yang, Q. V. Le, P. Nguyen, A. Senior, V. Vanhoucke, J. Dean, et al., “On rectiﬁed linear units for speech processing,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 3517–3521, 2013. [15] B. Yang, “A study of inverse short-time Fourier transform,” Proc. IEEE Conference on Acoustics, Speech, and Signal Pro- cessing (ICASSP), pp. 3541–3544, 2008. [16] P. Smaragdis and G. J. Mysore, “Separation by “humming”: User-guided sound extraction from monophonic mixtures,” IEEE Workshop on Applications of Signal Processing to Au- dio and Acoustics, pp. 69–72, 2009. [17] M. Spiertz and V. Gnann, “Source-ﬁlter based clustering for monaural blind source separation,” Proc. Int. Conference on Digital Audio Effects, 2009. [18] R. Jaiswal, D. FitzGerald, D. Barry, E. Coyle, and S. Rickard, “Clustering NMF basis functions using shifted NMF for monaural sound source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 245– 248, 2011. [19] P. C. Loizou, “Speech enhancement based on perceptually mo- tivated Bayesian estimators of the magnitude spectrum,” IEEE Transactions on Speech and Audio Processing, vol. 13, no. 5, pp. 857–869, 2005. [20] P. Vincent, H. Larochelle, Y. Bengio, and P.-A. Manzagol, “Ex- tracting and composing robust features with denoising autoen- coders,” Proceedings of the International Conference on Ma- chine Learning, pp. 1096–1103, 2008. [21] M. Chen, Z. Xu, K. Weinberger, and F. Sha, “Marginalized denoising autoencoders for domain adaptation,” Proceedings of the International Conference on Machine Learning, 2012. [22] J. Fritsch, “High quality musical audio source separation,” Master’s Thesis, UPMC / IRCAM / Telecom ParisTech, 2012. [23] E. Vincent, R. Gribonval, and C. Fevotte, “Performance mea- surement in blind audio source separation,” IEEE Transactions on Audio, Speech and Language Processing, vol. 14, no. 4, pp. 1462–1469, 2006. [24] P. Brady, “Matlab Mel ﬁlter implementation,” http://www.mathworks.com/matlabcentral/ fileexchange/23179-melfilter, 2014, [Online]. [25] F. Zheng, G. Zhang, and Z. Song, “Comparison of different implementations of MFCC,” Journal of Computer Science and Technology, vol. 16, no. 6, pp. 582–589, September 2001. [26] B. W. Bader and T. G. Kolda, “MATLAB tensor toolbox version 2.5,” http://www.sandia.gov/˜tgkolda/ TensorToolbox/, January 2012, [Online]. [27] B. W. Bader and T. G. Kolda, “Algorithm 862: MATLAB ten- sor classes for fast algorithm prototyping,” ACM Transactions on Mathematical Software, vol. 32, no. 4, pp. 635–653, De- cember 2006. [28] E. M. Grais and H. Erdogan, “Single channel speech music separation using nonnegative matrix factorization and spectral mask,” Digital Signal Processing (DSP), 2011 17th Interna- tional Conference on IEEE, pp. 1–6, 2011. [29] M. Goto, H. Hashiguchi, T. Nishimura, and R. Oka, “RWC Music Database: Music Genre Database and Musical Instru- ment Sound Database,” Proc. of the International Conference on Music Information Retrieval (ISMIR), pp. 229–230, 2003. 2139 View publication stats
+#### Content
+Provided proper attribution is provided, Google hereby grants permission to reproduce the tables and figures in this paper solely for use in journalistic or scholarly works. 
+
+---
+
+### Images
+
+#### Image 1
+**Description:** large rectangular color image (1520x2239)  
+![Image 1](page_3_img_1_e7acc8c9.png)  
+**Dimensions:** 1520x2239
+
+#### Image 2
+**Description:** medium rectangular color image (445x884)  
+![Image 2](page_4_img_1_a019f0b6.png)  
+**Dimensions:** 445x884
+
+#### Image 3
+**Description:** large rectangular color image (835x1282)  
+![Image 3](page_4_img_2_72d15ff8.png)  
+**Dimensions:** 835x1282
+
+---
+
+### Tables
+
+#### Table 1
+| train | N | d | d | h | d | d | P | ε | model | ff | k | v | drop | ls | steps |
+|-------|---|---|---|---|---|---|---|---|------|----|---|---|------|----|-------|
+| 6     | 512 | 2048 | 8 | 64 | 64 | 0.1 | 0.1 | 100K |    |   |   |      |    |       |
+| 1     | 512 | 512 | 4 | 128 | 128 | 16 | 32 | 32 | 32 | 16 | 16 |      |    |       |
+| 16    | 32 |   |   |   |   |   |   |   |   |   |   |   |   |   |   |
+| 2     | 4 | 8 | 256 | 32 | 32 | 1024 | 128 | 128 | 1024 | 4096 |   |   |   |   |
+| 0.0   | 0.2 | 0.0 | 0.2 |   |   |   |   |   |   |   |   |   |   |   |
+| positional embedding instead of sinusoids |   |   |   |   |   |   |   |   |   |   |   |   |   |   |
+| 6     | 1024 | 4096 | 16 | 0.3 | 300K |   |   |   |   |   |   |   |   |   |
+
+#### Table 2
+| Training |
+|----------|
+| WSJ only, discriminative |
+| WSJ only, discriminative |
+| WSJ only, discriminative |
+| WSJ only, discriminative |
+| semi-supervised |
+| semi-supervised |
+| semi-supervised |
+| semi-supervised |
+| multi-task |
+| generative |
+
+#### Table 3
+|   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   | st |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+|   |   |   |   |   |   |   |   |   |   |   |   |   |   | n |   | ne |   |   |   |   |   |   |   |   | no |   |   |   |   |   |   |   |   |   |   |   |   |   |
+|   |   |   |   |   |   |   |   |   |   |   | yt |   |   | ac |   | m |   | d |   |   |   |   | g |   | ita |   |   | s |   | t |   | > |   |   |   |   |   |   |
+|   |   |   |   |   |   | t |   |   |   |   | iro |   |   | ir |   | nre | e | es |   |   | e | 9 | ni |   | rts |   | gn | se | e | lu |   | S | >d | >d | >d | >d | >d | >d |
+|   |   |   |   |   | si | iri |   | ta |   |   | ja |   |   | em |   | vo | va | sa | we | sw | cn | 00 | ka | e | ig |   | it | co | ro | ciff |   | OE | ap | ap | ap | ap | ap | ap |
+| tI |   | si |   | ni | ht | ps |   | ht |   | a | m | fo |   | A |   | g | h | p | n | al | is | 2 | m | ht | er | ro | ov | rp | m | id | . | < | < | < | < | < | < | < |
+
+#### Table 4
+| tI | si | ni | si | tir | ta | a | yt | fo | n | st | e | d | w | s | e | 9 | g | e | n | ro | g | ss | er | tlu | . | > | > | > | > | > | > | > |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+|   |   |   | ht | ip | ht |   | iro |   | aci | ne | va | es | en | wa | cni | 00 | nik | ht | oit |   | nit | e | o | ci |   | SO | da | da | da | da | da | da |
+|   |   |   |   | s |   |   | ja |   | re | m | h | sa |   | l | s | 2 | a |   | art |   | ov | cor | m | ffi |   | E | p< | p< | p< | p< | p< | p< |
+|   |   |   |   |   |   |   | m |   | m | nr |   | p |   |   |   |   | m |   | sig |   |   | p |   | d |   | < |   |   |   |   |   |   |
+|   |   |   |   |   |   |   |   |   | A | ev |   |   |   |   |   |   |   |   | er |   |   |   |   |   |   |   |   |   |   |   |   |   |   |
+|   |   |   |   |   |   |   |   |   |   | og |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |   |
+
+---
+
+### Mathematical Formulas
+
+#### Formula 1
+$$
+z = (z_1)
+$$
+
+#### Formula 2
+$$
+to \ a \ sequence \ of \ continuous \ representations \ z = (z_1)
+$$
+
+#### Formula 3
+$$
+N = 6 \ identical \ layers
+$$
+
+#### Formula 4
+$$
+l = 512
+$$
+
+#### Formula 5
+$$
+The \ encoder \ is \ composed \ of \ a \ stack \ of \ N = 6 \ identical \ layers
+$$
+
+#### Formula 6
+$$
+produce \ outputs \ of \ dimension \ d_{model} = 512
+$$
+
+#### Formula 7
+$$
+The \ decoder \ is \ also \ composed \ of \ a \ stack \ of \ N = 6 \ identical \ layers
+$$
+
+#### Formula 8
+$$
+k = P_{dk} \ i
+$$
+
+#### Formula 9
+$$
+= softmax(QK^T)
+$$
+
+#### Formula 10
+$$
+q \cdot k = \sum_{i=1}^{d_k} q_i k_i
+$$
+
+#### Formula 11
+$$
+= 1 \cdot q_i k_i
+$$
+
+#### Formula 12
+$$
+i = Attention(QW^Q_i, KW^K_i, VW^V_i)
+$$
+
+#### Formula 13
+$$
+h = 8 \ parallel \ attention \ layers
+$$
+
+#### Formula 14
+$$
+k = d_v
+$$
+
+#### Formula 15
+$$
+h = 64
+$$
+
+#### Formula 16
+$$
+l = 512
+$$
+
+#### Formula 17
+$$
+f = 2048
+$$
+
+#### Formula 18
+$$
+\sqrt{d_{model}} = 5
+$$
+
+#### Formula 19
+$$
+= Concat(head_1, \ldots, head_h) W_O
+$$
+
+#### Formula 20
+$$
+W_O \ where \ head_i = Attention(QW^Q_i, KW^K_i, VW^V_i)
+$$
+
+#### Formula 21
+$$
+In \ this \ work \ we \ employ \ h = 8 \ parallel \ attention \ layers
+$$
+
+#### Formula 22
+$$
+For \ each \ of \ these \ we \ use \ d_k = d_v
+$$
+
+#### Formula 23
+$$
+= \frac{d_{model}}{h}
+$$
+
+#### Formula 24
+$$
+= 64
+$$
+
+#### Formula 25
+$$
+= max(0, xW_1 + b_1)W_2 + b_2
+$$
+
+#### Formula 26
+$$
+The \ dimensionality \ of \ input \ and \ output \ is \ d_{model} = 512
+$$
+
+#### Formula 27
+$$
+layer \ has \ dimensionality \ d_{ff} = 2048
+$$
+
+#### Formula 28
+$$
+= sin\left(\frac{pos}{10000^{2i/d_{model}}}\right)
+$$
+
+#### Formula 29
+$$
+= cos\left(\frac{pos}{10000^{2i/d_{model}}}\right) \ where \ pos \ is \ the \ position \ and \ i \ is \ the \ dimension
+$$
+
+#### Formula 30
+$$
+k = n
+$$
+
+#### Formula 31
+$$
+e = d
+$$
+
+#### Formula 32
+$$
+s = 4000
+$$
+
+#### Formula 33
+$$
+p_{num}
+$$
+
+#### Formula 34
+$$
+p_{steps}
+$$
+
+#### Formula 35
+$$
+Even \ with \ k = n
+$$
+
+#### Formula 36
+$$
+1 = 0
+$$
+
+#### Formula 37
+$$
+2 = 0
+$$
+
+#### Formula 38
+$$
+= 10
+$$
+
+#### Formula 39
+$$
+lrate = d^{-0.5} \ min(step_{num}^{-0.5}, step_{num} \ warmup_{steps}^{-1.5})
+$$
+
+#### Formula 40
+$$
+steps = 4000
+$$
+
+#### Formula 41
+$$
+p = 0
+$$
+
+#### Formula 42
+$$
+s = 0
+$$
+
+#### Formula 43
+$$
+\frac{1}{4}
+$$
+
+#### Formula 44
+$$
+l = 1024 \ on \ the \ Wall \ Street \ Journal \ (WSJ) \ portion \ of \ the \ Penn \ Treebank
+$$
+
+#### Formula 45
+$$
+layer \ transformer \ with \ d_{model} = 1024 \ on \ the \ Wall \ Street \ Journal \ (WSJ) \ portion \ of \ the \ Penn \ Treebank
+$$
+
+#### Formula 46
+$$
+(2013) \ [40] \ semi-supervised \ 91.3 \ Huang \& Harper \ (2009) \ [14] \ semi-supervised \ 91.3 \ McClosky \ et \ al
+$$
+
+#### Formula 47
+$$
+(2015) \ [23] \ multi-task \ 93.0 \ Dyer \ et \ al
+$$
+
+#### Formula 48
+$$
+[10] \ Alex \ Graves
+$$
+
+#### Formula 49
+$$
+[23] \ Minh-Thang \ Luong, \ Quoc \ V
+$$
+
+---
+
+### Forms and Fields
+
+#### Form 1
+
+#### Form 2
+
+#### Form 3
+
+#### Form 4
+
+#### Form 5
+
+#### Form 6
+
+#### Form 7
+
+#### Form 8
+
+#### Form 9
+
+#### Form 10
+
+#### Form 11
+
+#### Form 12
+
+#### Form 13
+
+#### Form 14
+
+---
+
+
+# Comprehensive Document Outline
+
+## Introduction
+
+*Converted from PDF using PPARSER*
+
+### Table of Contents
+- [Content](#content)
+- [Images](#images)
+- [Tables](#tables)
+- [Formulas](#formulas)
+- [Forms](#forms)
+
+### Content
+Provided proper attribution is provided, Google hereby grants permission to reproduce the tables and figures in this paper solely for use in journalistic or scholarly works. 
+
+Attention Is All You Need  
+Ashish Vaswani† Google Brain avaswani@google.com  
+Noam Shazeer† Google Brain noam@google.com  
+Niki Parmar† Google Research nikip@google.com  
+Jakob Uszkoreit† Google Research usz@google.com  
+Llion Jones† Google Research llion@google.com  
+Aidan N. Gomez†‡ University of Toronto aidan@cs.toronto.edu  
+Łukasz Kaiser† Google Brain lukaszkaiser@google.com  
+Illia Polosukhin†‡ illia.polosukhin@gmail.com  
+
+**Abstract**  
+The dominant sequence transduction models are based on complex recurrent or convolutional neural networks that include an encoder and a decoder. The best performing models also connect the encoder and decoder through an attention mechanism. We propose a new simple network architecture, the Transformer, based solely on attention mechanisms, dispensing with recurrence and convolutions entirely. Experiments on two machine translation tasks show these models to be superior in quality while being more parallelizable and requiring significantly less time to train. Our model achieves 28.4 BLEU on the WMT 2014 English-to-German translation task, improving over the existing best results, including ensembles, by over 2 BLEU. On the WMT 2014 English-to-French translation task, our model establishes a new single-model state-of-the-art BLEU score of 41.8 after training for 3.5 days on eight GPUs, a small fraction of the training costs of the best models from the literature. We show that the Transformer generalizes well to other tasks by applying it successfully to English constituency parsing both with large and limited training data. 
+
+†Equal contribution. Listing order is random. Jakob proposed replacing RNNs with self-attention and started the effort to evaluate this idea. Ashish, with Illia, designed and implemented the first Transformer models and has been crucially involved in every aspect of this work. Noam proposed scaled dot-product attention, multi-head attention and the parameter-free position representation and became the other person involved in nearly every detail. Niki designed, implemented, tuned and evaluated countless model variants in our original codebase and tensor2tensor. Llion also experimented with novel model variants, was responsible for our initial codebase, and efficient inference and visualizations. Lukasz and Aidan spent countless long days designing various parts of and implementing tensor2tensor, replacing our earlier codebase, greatly improving results and massively accelerating our research. ‡Work performed while at Google Brain. ‡Work performed while at Google Research. 
+
+31st Conference on Neural Information Processing Systems (NIPS 2017), Long Beach, CA, USA. arXiv:1706.03762v7 [cs.CL] 2 Aug 2023
+
+---
+
+## Discussion
+
+### Content
+The discussion section elaborates on the implications of the findings presented in the results section. It highlights the significance of the Transformer model in the context of existing architectures and its potential applications in various domains.
+
+1. **Performance Comparison**  
+   The Transformer model has shown superior performance in machine translation tasks compared to traditional RNNs and CNNs. This is attributed to its ability to leverage self-attention mechanisms effectively.
+
+2. **Generalization to Other Tasks**  
+   The architecture's flexibility allows it to be applied to tasks beyond translation, such as text summarization and question answering, demonstrating its versatility.
+
+3. **Future Directions**  
+   Future research may focus on optimizing the Transformer for even larger datasets and exploring its application in multimodal contexts, such as integrating text with images or audio.
+
+---
+
+## Conclusion
+
+In this work, we presented the Transformer, the first sequence transduction model based entirely on attention, replacing the recurrent layers most commonly used in encoder-decoder architectures with multi-headed self-attention. For translation tasks, the Transformer can be trained significantly faster than architectures based on recurrent or convolutional layers. On both WMT 2014 English-to-German and WMT 2014 English-to-French translation tasks, we achieve a new state of the art. In the former task, our best model outperforms even all previously reported ensembles. We are excited about the future of attention-based models and plan to apply them to other tasks. We plan to extend the Transformer to problems involving input and output modalities other than text and to investigate local, restricted attention mechanisms to efficiently handle large inputs and outputs such as images, audio, and video. Making generation less sequential is another research goal of ours. The code we used to train and evaluate our models is available at [GitHub](https://github.com/tensorflow/tensor2tensor).
+
+### Acknowledgements
+We are grateful to Nal Kalchbrenner and Stephan Gouws for their fruitful comments, corrections, and inspiration.
+
+---
 
 ## Images
 
 ### Image 1
-**Description:** small rectangular grayscale image (64x64)
-![Image 1](page_1_img_1_0f58f9aa.png)
-**Dimensions:** 64x64
+**Description:** large rectangular color image (1520x2239)  
+![Image 1](page_3_img_1_e7acc8c9.png)  
+**Dimensions:** 1520x2239
 
 ### Image 2
-**Description:** small rectangular color image (64x64)
-![Image 2](page_1_img_2_87e4f64c.png)
-**Dimensions:** 64x64
+**Description:** medium rectangular color image (445x884)  
+![Image 2](page_4_img_1_a019f0b6.png)  
+**Dimensions:** 445x884
 
 ### Image 3
-**Description:** small rectangular color image (64x64)
-![Image 3](page_1_img_3_1be6f0da.png)
-**Dimensions:** 64x64
+**Description:** large rectangular color image (835x1282)  
+![Image 3](page_4_img_2_72d15ff8.png)  
+**Dimensions:** 835x1282
 
+---
 
 ## Tables
 
 ### Table 1
-| See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper · April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS READS 138 4,160 3 authors: Stefan Uhlich Franck Giron University of Stuttgart Sony Europe B.V., Zwg. Deutschland 67 PUBLICATIONS 1,229 CITATIONS 8 PUBLICATIONS 380 CITATIONS SEE PROFILE SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175 PUBLICATIONS 2,294 CITATIONS SEE PROFILE |  |
-| --- | --- |
-| All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file. |  |
+| train | N | d | d | h | d | d | P | ε | model | ff | k | v | drop | ls | steps |
+|-------|---|---|---|---|---|---|---|---|-------|----|---|---|------|----|-------|
+| 6     | 512 | 2048 | 8 | 64 | 64 | 0.1 | 0.1 | 100K |    |   |   |      |    |       |
+| 1     | 512 | 512 | 4 | 128 | 128 | 16 | 32 | 32 | 32 | 16 | 16 |      |    |       |
+| 16    | 32 |   |   |   |   |   |   |   |   |   |   |      |    |       |
+| 2     | 4  | 8 | 256 | 32 | 32 | 1024 | 128 | 128 | 1024 | 4096 |   |   |   |   |
+| 0.0   | 0.2 | 0.0 | 0.2 |   |   |   |   |   |   |   |   |   |   |   |
+| positional embedding instead of sinusoids | 6 | 1024 | 4096 | 16 | 0.3 | 300K |   |   |   |   |   |   |   |   |
 
 ### Table 2
-| Instrument | Numberoffiles (=bVariations) | Materiallength |
-| --- | --- | --- |
-| Bassoon Cello Clarinet Horn Piano Saxophone Trumpet Viola Violin | 18 6 14 14 89 19 16 13 12 | 1.44hours 1.88hours 1.15hours 0.82hours 6.12hours 1.16hours 0.38hours 1.61hours 5.60hours |
+| Training |
+|----------|
+| WSJ only, discriminative |
+| semi-supervised |
+| multi-task |
+| generative |
 
 ### Table 3
-| Instrument Output | After1stlayer SDR SIR SAR | After2ndlayer SDR SIR SAR | After3rdlayer SDR SIR SAR | After4thlayer SDR SIR SAR | After5thlayer SDR SIR SAR | Afterfinetuning SDR SIR SAR |
-| --- | --- | --- | --- | --- | --- | --- |
-| Rawoutput Horn WFoutput smharB Rawoutput Piano WFoutput Rawoutput Violin WFoutput | 3.30 4.79 9.93 4.05 5.63 10.25 | 5.15 8.19 8.73 6.36 10.20 9.08 | 5.29 8.50 8.69 6.51 10.81 8.87 | 5.38 8.66 8.69 6.58 10.99 8.87 | 5.53 9.19 8.47 6.71 11.44 8.79 | 5.70 9.57 8.44 6.80 11.68 8.79 |
-|  | 0.85 1.93 9.58 2.62 4.54 8.41 | 2.34 4.37 7.97 4.13 7.53 7.49 | 3.16 6.60 6.64 4.36 9.07 6.66 | 3.26 6.61 6.82 4.40 9.13 6.67 | 3.34 6.86 6.71 4.47 9.41 6.62 | 3.47 7.34 6.51 4.68 10.13 6.54 |
-|  | −0.23 1.88 6.11 3.62 8.57 5.86 | 3.06 9.52 4.63 5.27 14.10 6.05 | 3.49 9.21 5.33 6.04 15.19 6.74 | 3.50 9.23 5.34 6.08 15.30 6.76 | 3.57 9.44 5.33 6.02 15.36 6.68 | 3.90 10.34 5.41 6.11 15.60 6.75 |
-| Rawoutput Bassoon WFoutput reissuL Rawoutput Piano WFoutput Rawoutput Trumpet WFoutput | 3.05 5.48 7.82 4.38 7.55 7.94 | 3.47 6.51 7.32 4.40 9.38 6.53 | 3.62 7.00 7.07 4.36 9.71 6.30 | 3.68 7.14 7.04 4.42 9.75 6.36 | 3.72 7.31 6.96 4.34 9.75 6.26 | 3.39 7.08 6.60 3.92 9.37 5.85 |
-|  | 1.57 3.30 8.08 3.12 6.07 7.14 | 1.69 4.06 6.90 3.33 6.60 6.95 | 1.87 4.21 7.08 3.23 6.44 6.94 | 1.94 4.31 7.06 3.32 6.64 6.89 | 1.93 4.38 6.92 3.27 6.69 6.75 | 1.97 4.65 6.61 2.99 6.64 6.29 |
-|  | 5.01 9.37 7.47 6.00 10.18 8.49 | 6.28 11.26 8.25 7.14 12.86 8.71 | 6.61 11.67 8.51 7.38 13.55 8.77 | 6.56 11.54 8.52 7.23 13.43 8.62 | 6.55 11.57 8.49 7.22 13.49 8.58 | 6.38 11.49 8.27 7.23 13.54 8.57 |
+| N | dmodel | dff | h | dk | dv | Pdrop | εls | train | PPL | BLEU | params | steps |
+|---|--------|-----|---|----|----|-------|-----|-------|-----|------|--------|-------|
+| 6 | 512    | 2048 | 8 | 64 | 64 | 0.1   | 0.1 | 100K  | 4.92 | 25.8 | 65     |       |
+| 1 | 512    | 512  | 4 | 128 | 128 | 5.29 | 24.9 |       |     |      |        |       |
+| 16 | 32   |     |   |   |   |   |   |   |   |   |   |   |   |
+| 2 | 4    | 8   | 256 | 32 | 32 | 1024 | 128 | 128 | 1024 | 4096 |   |   |   |
 
 ### Table 4
-| Instrument | MFCCkmeans[17] SDR SIR SAR | MelNMF[17] SDR SIR SAR | Shifted-NMF[18] SDR SIR SAR | DNNwithWF SDR SIR SAR |
-| --- | --- | --- | --- | --- |
-| Horn smharB Piano Violin Average | 3.87 5.76 9.41 3.30 4.42 10.76 −8.35 −7.89 10.21 | 4.17 5.83 10.17 −0.10 0.21 14.39 9.69 19.79 10.19 | 2.95 3.34 15.20 3.78 5.59 9.50 7.66 10.96 10.74 | 6.80 11.68 8.79 4.68 10.13 6.54 6.11 15.60 6.75 |
-|  | −0.39 0.76 10.13 | 4.59 8.61 11.58 | 4.80 6.63 11.81 | 5.86 12.47 7.36 |
-| Bassoon reissuL Piano Trumpet Average | 1.85 11.67 2.61 4.66 6.28 10.64 −1.73 −1.29 12.18 | 0.15 0.75 11.72 4.56 8.00 7.83 8.46 18.12 9.05 | −0.83 −0.60 15.43 2.54 5.14 7.16 6.57 7.39 14.95 | 3.92 9.37 5.85 2.99 6.64 6.29 7.23 13.54 8.57 |
-|  | 1.59 5.55 8.48 | 4.39 8.96 9.53 | 2.76 3.98 12.51 | 4.71 9.85 6.90 |
+| Parser | Training | WSJ 23 F1 |
+|--------|----------|-----------|
+| Vinyals & Kaiser el al. (2014) | WSJ only, discriminative | 88.3 |
+| Petrov et al. (2006) | WSJ only, discriminative | 90.4 |
+| Zhu et al. (2013) | WSJ only, discriminative | 90.4 |
+| Dyer et al. (2016) | WSJ only, discriminative | 91.7 |
+| Transformer (4 layers) | WSJ only, discriminative | 91.3 |
+| Zhu et al. (2013) | semi-supervised | 91.3 |
+| Huang & Harper (2009) | semi-supervised | 91.3 |
+| McClosky et al. (2006) | semi-supervised | 92.1 |
+| Vinyals & Kaiser el al. (2014) | semi-supervised | 92.1 |
+| Transformer (4 layers) | semi-supervised | 92.7 |
+| Luong et al. (2015) | multi-task | 93.0 |
+| Dyer et al. (2016) | generative | 93.3 |
 
-### Table 5
-|  |  |  |  |  | dedda r |  |  | dedda r |  |  | dedda r |  |  | gninut e |  | Piano Horn Violin |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-|  |  |  |  | dr | eyal |  | ht | eyal |  | ht | eyal |  |  | nif trat |  |  |
-|  |  |  |  |  | 3 |  |  | 4 |  |  | 5 |  |  | S |  |  |
-|  |  | d |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  | edda |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | d | reyal |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-
+---
 
 ## Mathematical Formulas
 
 ### Formula 1
-```latex
-i=1 vi(n)
-```
+$$
+z = (z_1)
+$$
 
 ### Formula 2
-```latex
-\frac{8}{15}
-```
+$$
+to a sequence of continuous representations z = (z_1)
+$$
 
 ### Formula 3
-```latex
-= s(n) + M X i
-```
+$$
+N = 6 \text{ identical layers}
+$$
 
 ### Formula 4
-```latex
-=1 vi(n)
-```
+$$
+l = 512
+$$
 
 ### Formula 5
-```latex
-2135 978-1-4673-6997-\frac{8}{15}/$31.00 2015 IEEE ICASSP 2015
-```
+$$
+\text{The encoder is composed of a stack of } N = 6 \text{ identical layers}
+$$
 
 ### Formula 6
-```latex
-k = 1
-```
+$$
+\text{produce outputs of dimension } d_{model} = 512
+$$
 
 ### Formula 7
-```latex
-k=1
-```
+$$
+\text{The decoder is also composed of a stack of } N = 6 \text{ identical layers}
+$$
 
 ### Formula 8
-```latex
-p=1
-```
+$$
+k = P_{dk} i
+$$
 
 ### Formula 9
-```latex
-b= Variations) Bassoon 18 1
-```
+$$
+= \text{softmax}(QK^T)
+$$
 
 ### Formula 10
-```latex
-i = 1
-```
+$$
+q \cdot k = \sum_{i=1}^{d_k} q_i k_i
+$$
 
 ### Formula 11
-```latex
-i=1
-```
+$$
+= 1 \cdot q_i k_i
+$$
 
 ### Formula 12
-```latex
-> 0 in order to make it independent of different amplitude levels of the mixture x(n) where
-```
+$$
+i = \text{Attention}(QW^Q_i, KW^K_i, V W^V_i)
+$$
 
 ### Formula 13
-```latex
-1 = max (Wkxk + bk
-```
+$$
+h = 8 \text{ parallel attention layers}
+$$
 
 ### Formula 14
-```latex
-i o with i = 1
-```
+$$
+k = dv
+$$
 
 ### Formula 15
-```latex
-= 1
-```
+$$
+h = 64
+$$
 
 ### Formula 16
-```latex
-M X i=1
-```
+$$
+l = 512
+$$
 
 ### Formula 17
-```latex
-Mixture x(n) ..
-```
+$$
+f = 2048
+$$
 
 ### Formula 18
-```latex
-,˜s(P )o and n ˜v(1) i ,
-```
+$$
+\sqrt{d_{model}} = 5
+$$
 
 ### Formula 19
-```latex
-, ˜v(P ) i o with i = 1,
-```
+$$
+= \text{Concat(head}_1, \ldots, \text{head}_h) W_O
+$$
 
 ### Formula 20
-```latex
-, M where ˜s(p)\inC(2C+1)Land ˜v(p) i \inC(2C+1)L, i.e., they also contain the 2C neighboring frames
-```
+$$
+W_O \text{ where head}_i = \text{Attention}(QW^Q_i, KW^K_i, V W^V_i)
+$$
 
 ### Formula 21
-```latex
-These are now combined to form the DNN input/targets, i.e., x(p)= 1 \gamma(p) \alpha(p)˜s(p) + M X i=1 \alpha(p) i ˜v(p) i , (3a) 2136
-```
+$$
+\text{In this work we employ } h = 8 \text{ parallel attention layers}
+$$
 
 ### Formula 22
-```latex
-i=1
-```
+$$
+\text{For each of these we use } dk = dv
+$$
 
 ### Formula 23
-```latex
-S = 0    0 I 0    0
-```
+$$
+= \frac{d_{model}}{h}
+$$
 
 ### Formula 24
-```latex
-p=1 s(p)
-```
+$$
+= 64
+$$
 
 ### Formula 25
-```latex
-k = 1 or the output of the (k
-```
+$$
+= \max(0, xW_1 + b_1)W_2 + b_2
+$$
 
 ### Formula 26
-```latex
-p=1
-```
+$$
+\text{The dimensionality of input and output is } d_{model} = 512
+$$
 
 ### Formula 27
-```latex
-k = CsxC
-```
+$$
+\text{layer has dimensionality } d_{ff} = 2048
+$$
 
 ### Formula 28
-```latex
-k= s
-```
+$$
+= \sin\left(\frac{pos}{10000^{2i/d_{model}}}\right)
+$$
 
 ### Formula 29
-```latex
-x = P X p
-```
+$$
+= \cos\left(\frac{pos}{10000^{2i/d_{model}}}\right) \text{ where pos is the position and i is the dimension}
+$$
 
 ### Formula 30
-```latex
-s =1 P PP p
-```
+$$
+k = n
+$$
 
 ### Formula 31
-```latex
-k = 1 P PP p
-```
+$$
+e = d
+$$
 
 ### Formula 32
-```latex
-L = 513 magnitude values and we augment the input vector by C
-```
+$$
+s = 4000
+$$
 
 ### Formula 33
-```latex
-L = 3591 elements and corresponds to 224 milliseconds of the mixture signal
-```
+$$
+p_{num}
+$$
 
 ### Formula 34
-```latex
-P = 106samples and the gen- erated training material has thus a length of 62
-```
+$$
+p_{steps}
+$$
 
 ### Formula 35
-```latex
-> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in
-```
+$$
+\text{Even with } k = n
+$$
 
 ### Formula 36
-```latex
-PM i=1
-```
+$$
+1 = 0
+$$
 
 ### Formula 37
-```latex
-= arg min Wk
-```
+$$
+2 = 0
+$$
 
 ### Formula 38
-```latex
-bk P X p=1 s(p)
-```
+$$
+= 10
+$$
 
 ### Formula 39
-```latex
-k denotes either the pth DNN input for k = 1 or the output of the (k
-```
+$$
+lrate = d^{-0.5} \min(step_{num}^{-0.5}, step_{num} \cdot warmup_{steps}^{-1.5})
+$$
 
 ### Formula 40
-```latex
-form and the solution is given by Winit k = CsxC
-```
+$$
+steps = 4000
+$$
 
 ### Formula 41
-```latex
-binit k= s
-```
+$$
+p = 0
+$$
 
 ### Formula 42
-```latex
-with Csx = P X p
-```
+$$
+s = 0
+$$
 
 ### Formula 43
-```latex
-=1  s(p)
-```
+$$
+\frac{1}{4}
+$$
 
 ### Formula 44
-```latex
-Cxx = P X p
-```
+$$
+l = 1024 \text{ on the Wall Street Journal (WSJ) portion of the Penn Treebank}
+$$
 
 ### Formula 45
-```latex
-=1  x(p) k
-```
+$$
+\text{layer transformer with } d_{model} = 1024 \text{ on the Wall Street Journal (WSJ) portion of the Penn Treebank}
+$$
 
 ### Formula 46
-```latex
-and s =1 P PP p
-```
+$$
+(2013) [40] \text{ semi-supervised } 91.3 \text{ Huang \& Harper (2009) [14] semi-supervised } 91.3 \text{ McClosky et al}
+$$
 
 ### Formula 47
-```latex
-=1s(p)
-```
+$$(2015) [23] \text{ multi-task } 93.0 \text{ Dyer et al}$$
 
 ### Formula 48
-```latex
-xk = 1 P PP p
-```
+$$
+[10] \text{ Alex Graves}
+$$
 
 ### Formula 49
-```latex
-=1x(p) k
-```
+$$
+[23] \text{ Minh-Thang Luong, Quoc V}
+$$
 
-### Formula 50
-```latex
-we have L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 51
-```latex
-= 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN
-```
-
-### Formula 52
-```latex
-we use P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 53
-```latex
-3000 = 6000 L-BFGS iterations
-```
-
-### Formula 54
-```latex
-s(p)=\alpha(p) \gamma(p) S ˜s(p) , (3b) where \gamma(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in \alpha(p)˜s(p) + PM i=1\alpha(p) i ˜v(p) i and S \inRL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0
-```
-
-### Formula 55
-```latex
-The scalars \alpha(p), \alpha(p) 1,
-```
-
-### Formula 56
-```latex
-The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k
-```
-
-### Formula 57
-```latex
-., {Wk, bk}
-```
-
-### Formula 58
-```latex
-J = (PP p
-```
-
-### Formula 59
-```latex
-p=1
-```
-
-### Formula 60
-```latex
-J = 0
-```
-
-### Formula 61
-```latex
-2 the evolution of the normalized DNN training error J = (PP p
-```
-
-### Formula 62
-```latex
-=1
-```
-
-### Formula 63
-```latex
-PP p=1
-```
-
-### Formula 64
-```latex
-we have an initial error of J = 0
-```
-
-### Formula 65
-```latex
-we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1
-```
-
-### Formula 66
-```latex
-= 0
-```
-
-### Formula 67
-```latex
-2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec
-```
-
-### Formula 68
-```latex
-REFERENCES [1] P
-```
-
-### Formula 69
-```latex
-[2] G
-```
-
-### Formula 70
-```latex
-[3] Z
-```
-
-### Formula 71
-```latex
-[4] J.-L
-```
-
-### Formula 72
-```latex
-[5] D
-```
-
-### Formula 73
-```latex
-[6] D
-```
-
-### Formula 74
-```latex
-[7] A
-```
-
-### Formula 75
-```latex
-[8] C
-```
-
-### Formula 76
-```latex
-[9] G
-```
-
-### Formula 77
-```latex
-[10] E
-```
-
-### Formula 78
-```latex
-[11] P.-S
-```
-
-### Formula 79
-```latex
-[12] P.-S
-```
-
-### Formula 80
-```latex
-[13] X
-```
-
-### Formula 81
-```latex
-[14] M
-```
-
-### Formula 82
-```latex
-[15] B
-```
-
-### Formula 83
-```latex
-[16] P
-```
-
-### Formula 84
-```latex
-[17] M
-```
-
-### Formula 85
-```latex
-[18] R
-```
-
-### Formula 86
-```latex
-[19] P
-```
-
-### Formula 87
-```latex
-[20] P
-```
-
-### Formula 88
-```latex
-[21] M
-```
-
-### Formula 89
-```latex
-[22] J
-```
-
-### Formula 90
-```latex
-[23] E
-```
-
-### Formula 91
-```latex
-[24] P
-```
-
-### Formula 92
-```latex
-[25] F
-```
-
-### Formula 93
-```latex
-[26] B
-```
-
-### Formula 94
-```latex
-[27] B
-```
-
-### Formula 95
-```latex
-[28] E
-```
-
-### Formula 96
-```latex
-[29] M
-```
-
+---
 
 ## Forms and Fields
 
@@ -6921,5 +1360,162 @@ REFERENCES [1] P
 
 ### Form 5
 
+### Form 6
+
+### Form 7
+
+### Form 8
+
+### Form 9
+
+### Form 10
+
+### Form 11
+
+### Form 12
+
+### Form 13
+
+### Form 14
 
 
+# Comprehensive Document Outline
+
+## Appendices
+
+### Table of Contents
+- [Content](#content)
+- [Images](#images)
+- [Tables](#tables)
+- [Formulas](#formulas)
+- [Forms](#forms)
+
+## Content
+Provided proper attribution is provided, Google hereby grants permission to reproduce the tables and figures in this paper solely for use in journalistic or scholarly works. 
+
+**Authors:**
+- Ashish Vaswani, Google Brain (avaswani@google.com)
+- Noam Shazeer, Google Brain (noam@google.com)
+- Niki Parmar, Google Research (nikip@google.com)
+- Jakob Uszkoreit, Google Research (usz@google.com)
+- Llion Jones, Google Research (llion@google.com)
+- Aidan N. Gomez, University of Toronto (aidan@cs.toronto.edu)
+- Łukasz Kaiser, Google Brain (lukaszkaiser@google.com)
+- Illia Polosukhin (illia.polosukhin@gmail.com)
+
+**Abstract:**
+The dominant sequence transduction models are based on complex recurrent or convolutional neural networks that include an encoder and a decoder. The best performing models also connect the encoder and decoder through an attention mechanism. We propose a new simple network architecture, the Transformer, based solely on attention mechanisms, dispensing with recurrence and convolutions entirely. Experiments on two machine translation tasks show these models to be superior in quality while being more parallelizable and requiring significantly less time to train. Our model achieves 28.4 BLEU on the WMT 2014 English-to-German translation task, improving over the existing best results, including ensembles, by over 2 BLEU. On the WMT 2014 English-to-French translation task, our model establishes a new single-model state-of-the-art BLEU score of 41.8 after training for 3.5 days on eight GPUs, a small fraction of the training costs of the best models from the literature. We show that the Transformer generalizes well to other tasks by applying it successfully to English constituency parsing both with large and limited training data.
+
+### 1 Introduction
+Recurrent neural networks, long short-term memory [13] and gated recurrent [7] neural networks in particular, have been firmly established as state of the art approaches in sequence modeling and transduction problems such as language modeling and machine translation [35, 2, 5]. Numerous efforts have since continued to push the boundaries of recurrent language models and encoder-decoder architectures [38, 24, 15]. 
+
+Recurrent models typically factor computation along the symbol positions of the input and output sequences. Aligning the positions to steps in computation time, they generate a sequence of hidden states \( h_t \), as a function of the previous hidden state \( h_{t-1} \) and the input for position \( t \). This inherently sequential nature precludes parallelization within training examples, which becomes critical at longer sequence lengths, as memory constraints limit batching across examples. 
+
+Recent work has achieved significant improvements in computational efficiency through factorization tricks [21] and conditional computation [32], while also improving model performance in case of the latter. The fundamental constraint of sequential computation, however, remains. Attention mechanisms have become an integral part of compelling sequence modeling and transduction models in various tasks, allowing modeling of dependencies without regard to their distance in the input or output sequences [2, 19]. 
+
+In all but a few cases [27], however, such attention mechanisms are used in conjunction with a recurrent network. In this work we propose the Transformer, a model architecture eschewing recurrence and instead relying entirely on an attention mechanism to draw global dependencies between input and output. The Transformer allows for significantly more parallelization and can reach a new state of the art in translation quality after being trained for as little as twelve hours on eight P100 GPUs.
+
+### 2 Background
+The goal of reducing sequential computation also forms the foundation of the Extended Neural GPU [16], ByteNet [18] and ConvS2S [9], all of which use convolutional neural networks as basic building blocks, computing hidden representations in parallel for all input and output positions. In these models, the number of operations required to relate signals from two arbitrary input or output positions grows in the distance between positions, linearly for ConvS2S and logarithmically for ByteNet. This makes it more difficult to learn dependencies between distant positions [12]. 
+
+In the Transformer this is reduced to a constant number of operations, albeit at the cost of reduced effective resolution due to averaging attention-weighted positions, an effect we counteract with Multi-Head Attention as described in section 3.2. 
+
+Self-attention, sometimes called intra-attention, is an attention mechanism relating different positions of a single sequence in order to compute a representation of the sequence. Self-attention has been used successfully in a variety of tasks including reading comprehension, abstractive summarization, textual entailment and learning task-independent sentence representations [4, 27, 28, 22]. 
+
+End-to-end memory networks are based on a recurrent attention mechanism instead of sequence-aligned recurrence and have been shown to perform well on simple-language question answering and language modeling tasks [34]. To the best of our knowledge, however, the Transformer is the first transduction model relying entirely on self-attention to compute representations of its input and output without using sequence-aligned RNNs or convolution. 
+
+In the following sections, we will describe the Transformer, motivate self-attention and discuss its advantages over models such as [17, 18] and [9].
+
+### 3 Model Architecture
+Most competitive neural sequence transduction models have an encoder-decoder structure [5, 2, 35]. Here, the encoder maps an input sequence of symbol representations \( (x_1, ..., x_n) \) to a sequence of continuous representations \( z = (z_1, ..., z_n) \). Given \( z \), the decoder then generates an output sequence \( (y_1, ..., y_m) \) of symbols one element at a time. At each step the model is auto-regressive [10], consuming the previously generated symbols as additional input when generating the next.
+
+![The Transformer - model architecture](page_3_img_1_e7acc8c9.png)
+
+#### 3.1 Encoder and Decoder Stacks
+**Encoder:** The encoder is composed of a stack of \( N = 6 \) identical layers. Each layer has two sub-layers. The first is a multi-head self-attention mechanism, and the second is a simple, position-wise fully connected feed-forward network. We employ a residual connection [11] around each of the two sub-layers, followed by layer normalization [1]. That is, the output of each sub-layer is 
+
+\[
+\text{LayerNorm}(x + \text{Sublayer}(x))
+\]
+
+where \( \text{Sublayer}(x) \) is the function implemented by the sub-layer itself. To facilitate these residual connections, all sub-layers in the model, as well as the embedding layers, produce outputs of dimension \( d_{\text{model}} = 512 \).
+
+**Decoder:** The decoder is also composed of a stack of \( N = 6 \) identical layers. In addition to the two sub-layers in each encoder layer, the decoder inserts a third sub-layer, which performs multi-head attention over the output of the encoder stack. Similar to the encoder, we employ residual connections around each of the sub-layers, followed by layer normalization. We also modify the self-attention sub-layer in the decoder stack to prevent positions from attending to subsequent positions. This masking, combined with the fact that the output embeddings are offset by one position, ensures that the predictions for position \( i \) can depend only on the known outputs at positions less than \( i \).
+
+#### 3.2 Attention
+An attention function can be described as mapping a query and a set of key-value pairs to an output, where the query, keys, values, and output are all vectors. The output is computed as a weighted sum of the values, where the weight assigned to each value is computed by a compatibility function of the query with the corresponding key.
+
+##### 3.2.1 Scaled Dot-Product Attention
+We call our particular attention "Scaled Dot-Product Attention". The input consists of queries and keys of dimension \( d_k \), and values of dimension \( d_v \). We compute the dot products of the query with all keys, divide each by \( \sqrt{d_k} \), and apply a softmax function to obtain the weights on the values. 
+
+In practice, we compute the attention function on a set of queries simultaneously, packed together into a matrix \( Q \). The keys and values are also packed together into matrices \( K \) and \( V \). We compute the matrix of outputs as:
+
+\[
+\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^T}{\sqrt{d_k}}\right)V
+\]
+
+The two most commonly used attention functions are additive attention [2], and dot-product (multiplicative) attention. Dot-product attention is identical to our algorithm, except for the scaling factor of \( \frac{1}{\sqrt{d_k}} \). 
+
+Additive attention computes the compatibility function using a feed-forward network with a single hidden layer. While the two are similar in theoretical complexity, dot-product attention is much faster and more space-efficient in practice, since it can be implemented using highly optimized matrix multiplication code. 
+
+While for small values of \( d_k \) the two mechanisms perform similarly, additive attention outperforms dot product attention without scaling for larger values of \( d_k \) [3]. We suspect that for large values of \( d_k \), the dot products grow large in magnitude, pushing the softmax function into regions where it has extremely small gradients. To counteract this effect, we scale the dot products by \( \frac{1}{\sqrt{d_k}} \).
+
+##### 3.2.2 Multi-Head Attention
+Instead of performing a single attention function with \( d_{\text{model}} \)-dimensional keys, values and queries, we found it beneficial to linearly project the queries, keys and values \( h \) times with different, learned linear projections to \( d_k \), \( d_k \) and \( d_v \) dimensions, respectively. On each of these projected versions of queries, keys and values we then perform the attention function in parallel, yielding \( d_v \)-dimensional output values. These are concatenated and once again projected, resulting in the final values, as depicted in the figure.
+
+\[
+\text{MultiHead}(Q, K, V) = \text{Concat}(\text{head}_1, ..., \text{head}_h)W_O
+\]
+
+where 
+
+\[
+\text{head}_i = \text{Attention}(QW_{Q_i}, KW_{K_i}, VW_{V_i})
+\]
+
+The projections are parameter matrices \( W_{Q_i} \in \mathbb{R}^{d_{\text{model}} \times d_k} \), \( W_{K_i} \in \mathbb{R}^{d_{\text{model}} \times d_k} \), \( W_{V_i} \in \mathbb{R}^{d_{\text{model}} \times d_v} \) and \( W_O \in \mathbb{R}^{hd_v \times d_{\text{model}} \). In this work we employ \( h = 8 \) parallel attention layers, or heads. For each of these we use \( d_k = d_v = \frac{d_{\text{model}}}{h} = 64 \). Due to the reduced dimension of each head, the total computational cost is similar to that of single-head attention with full dimensionality.
+
+##### 3.2.3 Applications of Attention in our Model
+The Transformer uses multi-head attention in three different ways:
+- In "encoder-decoder attention" layers, the queries come from the previous decoder layer, and the memory keys and values come from the output of the encoder. This allows every position in the decoder to attend over all positions in the input sequence. This mimics the typical encoder-decoder attention mechanisms in sequence-to-sequence models such as [38, 2, 9].
+- The encoder contains self-attention layers. In a self-attention layer all of the keys, values and queries come from the same place, in this case, the output of the previous layer in the encoder. Each position in the encoder can attend to all positions in the previous layer of the encoder.
+- Similarly, self-attention layers in the decoder allow each position in the decoder to attend to all positions in the decoder up to and including that position. We need to prevent leftward information flow in the decoder to preserve the auto-regressive property. We implement this inside of scaled dot-product attention by masking out (setting to \(-\infty\)) all values in the input of the softmax which correspond to illegal connections.
+
+#### 3.3 Position-wise Feed-Forward Networks
+In addition to attention sub-layers, each of the layers in our encoder and decoder contains a fully connected feed-forward network, which is applied to each position separately and identically. This consists of two linear transformations with a ReLU activation in between.
+
+\[
+\text{FFN}(x) = \max(0, xW_1 + b_1)W_2 + b_2
+\]
+
+While the linear transformations are the same across different positions, they use different parameters from layer to layer. Another way of describing this is as two convolutions with kernel size 1. The dimensionality of input and output is \( d_{\text{model}} = 512 \), and the inner-layer has dimensionality \( d_{ff} = 2048 \).
+
+#### 3.4 Embeddings and Softmax
+Similarly to other sequence transduction models, we use learned embeddings to convert the input tokens and output tokens to vectors of dimension \( d_{\text{model}} \). We also use the usual learned linear transformation and softmax function to convert the decoder output to predicted next-token probabilities. In our model, we share the same weight matrix between the two embedding layers and the pre-softmax linear transformation, similar to [30]. In the embedding layers, we multiply those weights by \( \sqrt{d_{\text{model}}} \).
+
+### 4 Why Self-Attention
+In this section we compare various aspects of self-attention layers to the recurrent and convolutional layers commonly used for mapping one variable-length sequence of symbol representations \( (x_1, ..., x_n) \) to another sequence of equal length \( (z_1, ..., z_n) \), with \( x_i, z_i \in \mathbb{R}^d \), such as a hidden layer in a typical sequence transduction encoder or decoder. Motivating our use of self-attention we consider three desiderata. One is the total computational complexity per layer. Another is the amount of computation that can be parallelized, as measured by the minimum number of sequential operations required. The third is the path length between long-range dependencies in the network. Learning long-range dependencies is a key challenge in many sequence transduction tasks. 
+
+One key factor affecting the ability to learn such dependencies is the length of the paths forward and backward signals have to traverse in the network. The shorter these paths between any combination of positions in the input and output sequences, the easier it is to learn long-range dependencies [12]. Hence we also compare the maximum path length between any two input and output positions in networks composed of the different layer types. 
+
+As noted in Table 1, a self-attention layer connects all positions with a constant number of sequentially executed operations, whereas a recurrent layer requires \( O(n) \) sequential operations. In terms of computational complexity, self-attention layers are faster than recurrent layers when the sequence length \( n \) is smaller than the representation dimensionality \( d \), which is most often the case with sentence representations used by state-of-the-art models in machine translations, such as word-piece [38] and byte-pair [31] representations. 
+
+To improve computational performance for tasks involving very long sequences, self-attention could be restricted to considering only a neighborhood of size \( r \) in the input sequence centered around the respective output position. This would increase the maximum path length to \( O(n/r) \). We plan to investigate this approach further in future work. 
+
+A single convolutional layer with kernel width \( k < n \) does not connect all pairs of input and output positions. Doing so requires a stack of \( O(n/k) \) convolutional layers in the case of contiguous kernels, or \( O(\log_k(n)) \) in the case of dilated convolutions [18], increasing the length of the longest paths between any two positions in the network. Convolutional layers are generally more expensive than recurrent layers, by a factor of \( k \). 
+
+Separable convolutions [6], however, decrease the complexity considerably, to \( O(k n d + n d^2) \). Even with \( k = n \), however, the complexity of a separable convolution is equal to the combination of a self-attention layer and a point-wise feed-forward layer, the approach we take in our model. 
+
+As a side benefit, self-attention could yield more interpretable models. We inspect attention distributions from our models and present and discuss examples in the appendix. Not only do individual attention heads clearly learn to perform different tasks, many appear to exhibit behavior related to the syntactic and semantic structure of the sentences.
+
+### 5 Training
+This section describes the training regime for our models.
+
+#### 5.1 Training Data and Batching
+We trained on the standard WMT 2014 English-German dataset consisting of about 4.5 million sentence pairs. Sentences were encoded using byte-pair encoding [3], which has a shared source-target vocabulary of about 37000 tokens. For English-French, we used the significantly larger WMT 2014 English-French dataset consisting of 36M sentences and split tokens into a 32000 word-piece vocabulary [38]. Sentence pairs were batched together by approximate sequence length. Each training batch contained a set of sentence pairs containing approximately 25000 source tokens and 25000 target tokens.
+
+#### 5.2 Hardware and Schedule
+We trained our models on one machine with 8 NVIDIA P100 GPUs. For our base models using the hyperparameters described throughout the paper, each training step took about 0.4 seconds. We trained the base models for a total of 100,000 steps or 12 hours. For our big models (described on the bottom line of table 3), step time was 1.0 seconds. The big models were trained for 300,000 steps (3.5 days).
+
+#### 5.3 Optimizer
+We used the Adam optimizer [20] with \( \beta_1 = 0.9 \), \( \beta_2 = 0.98 \) and \( \epsilon = 10^{-9}

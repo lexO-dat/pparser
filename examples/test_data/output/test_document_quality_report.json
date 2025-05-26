@@ -1,24 +1,23 @@
 {
   "validation_checks": {
     "structure_quality": {
-      "score": 55,
+      "score": 65,
       "issues": [
-        "Skipped heading level: The document uses '## Introduction' followed by '# test_document', which skips a heading level.",
-        "Inconsistent heading levels: The document has inconsistent use of heading levels, which disrupts the hierarchy.",
-        "Lack of logical section organization: The content section appears to be a mix of abstract and introduction without clear separation.",
-        "Improper use of Markdown elements: The document uses asterisks for emphasis but does not use them consistently or appropriately.",
-        "Table of Contents links do not match sections: The links in the Table of Contents do not correspond to the actual sections in the document."
+        "Skipped heading levels: The document starts with '## Table of Contents' and then jumps to '# Comprehensive Document Outline', which is a level 1 heading. This creates a disjointed structure.",
+        "Duplicate Table of Contents: There are two separate 'Table of Contents' sections, which can confuse readers.",
+        "Inconsistent use of headings: The document uses '##' for some sections and '###' for subsections, but the hierarchy is not consistently followed throughout the document.",
+        "Lack of clear section organization: The document lacks a clear flow from one section to another, particularly after the 'Abstract'."
       ],
       "strengths": [
-        "The document has a clear title and a Table of Contents, which is a good practice for navigation.",
-        "The content includes relevant citations and references, which adds credibility."
+        "The document includes a Table of Contents, which is helpful for navigation.",
+        "The author list is clearly presented with affiliations and contact information.",
+        "The abstract provides a concise summary of the document's content."
       ],
       "suggestions": [
-        "Adjust the heading levels to maintain a proper hierarchy (e.g., change '# test_document' to '## Test Document').",
-        "Separate the abstract from the introduction for better clarity and organization.",
-        "Ensure that all sections listed in the Table of Contents are present and correctly linked.",
-        "Use consistent formatting for emphasis and other Markdown elements throughout the document.",
-        "Consider breaking down long paragraphs into smaller sections for better readability."
+        "Remove the duplicate Table of Contents and consolidate it into one comprehensive list.",
+        "Ensure that the heading levels follow a consistent hierarchy without skipping levels.",
+        "Consider organizing the sections more logically to improve document flow, perhaps by grouping related sections together.",
+        "Use consistent formatting for all headings and subheadings to enhance readability."
       ]
     },
     "content_completeness": {
@@ -53,6 +52,8 @@
         "tables: ",
         "tables: ",
         "tables: ",
+        "tables: ",
+        "tables: ",
         "formulas: ",
         "formulas: ",
         "formulas: ",
@@ -102,53 +103,15 @@
         "formulas: ",
         "formulas: ",
         "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
-        "formulas: ",
+        "forms: ",
+        "forms: ",
+        "forms: ",
+        "forms: ",
+        "forms: ",
+        "forms: ",
+        "forms: ",
+        "forms: ",
+        "forms: ",
         "forms: ",
         "forms: ",
         "forms: ",
@@ -157,70 +120,64 @@
       ]
     },
     "readability": {
-      "score": 45,
-      "readability_level": "difficult",
+      "score": 65,
+      "readability_level": "moderate",
       "issues": [
         "Long and complex sentences that may confuse readers.",
-        "Paragraphs are dense and lack clear breaks, making it hard to follow.",
-        "Inconsistent use of headings; some sections are not clearly defined.",
-        "Lack of transitions between sections, leading to abrupt topic changes.",
-        "Technical jargon and abbreviations without explanations may alienate general readers."
+        "Lack of clear transitions between sections.",
+        "Dense paragraphs with technical jargon that may not be accessible to all readers.",
+        "Repetition of the Table of Contents which may cause confusion."
       ],
       "suggestions": [
         "Shorten sentences to improve clarity and comprehension.",
-        "Break up dense paragraphs into smaller, more digestible sections.",
-        "Use consistent and clear headings to better organize content.",
-        "Add transitional phrases to improve flow between sections.",
-        "Provide definitions or explanations for technical terms and abbreviations."
+        "Use bullet points or numbered lists to break down complex information.",
+        "Add transitional phrases between sections to improve flow.",
+        "Consider simplifying technical jargon or providing definitions for complex terms.",
+        "Remove the duplicate Table of Contents to streamline the document."
       ]
     },
     "accuracy": {
-      "score": 65,
+      "score": 60,
       "accuracy_issues": [
-        "The Markdown output does not include the document metadata, which is crucial for understanding the context of the content.",
-        "The structure of the content sections is not clearly represented in the Markdown output, leading to potential confusion about the organization of the document.",
-        "The assets section is completely missing from the Markdown output, which may contain important supplementary information."
+        "The Markdown output has a different structure in the Table of Contents compared to the original content, which may lead to confusion about the organization of the document.",
+        "The original content summary indicates a more complex structure with metadata and assets that are not represented in the Markdown output.",
+        "The authors' section is present but lacks context about their contributions or the significance of their work, which is essential for understanding.",
+        "The abstract is truncated in the Markdown output, missing critical information about the model's performance and implications."
       ],
       "preserved_elements": [
-        "The title 'Comprehensive Document Outline' is preserved.",
-        "The introduction section is present, although it is not clearly defined.",
-        "The content section includes a link to the publication and some author information."
+        "The authors' names and affiliations are accurately listed.",
+        "The abstract captures the essence of the Transformer model's purpose and its advantages over previous models."
       ],
       "recommendations": [
-        "Include the document metadata in the Markdown output to provide context.",
-        "Clearly define and structure the content sections to reflect the original organization.",
-        "Add the assets section to ensure all relevant information is included."
+        "Ensure the Table of Contents reflects the original structure and includes all relevant sections.",
+        "Include document metadata and asset information to provide a complete overview.",
+        "Expand the abstract to include all relevant performance metrics and implications of the findings.",
+        "Consider adding context to the authors' contributions to enhance understanding."
       ]
     }
   },
   "improvements": [
     {
       "type": "structure",
-      "description": "Adjust the heading levels to maintain a proper hierarchy (e.g., change '# test_document' to '## Test Document').",
+      "description": "Remove the duplicate Table of Contents and consolidate it into one comprehensive list.",
       "priority": "medium",
       "auto_fixable": false
     },
     {
       "type": "structure",
-      "description": "Separate the abstract from the introduction for better clarity and organization.",
+      "description": "Ensure that the heading levels follow a consistent hierarchy without skipping levels.",
       "priority": "medium",
       "auto_fixable": false
     },
     {
       "type": "structure",
-      "description": "Ensure that all sections listed in the Table of Contents are present and correctly linked.",
+      "description": "Consider organizing the sections more logically to improve document flow, perhaps by grouping related sections together.",
       "priority": "medium",
       "auto_fixable": false
     },
     {
       "type": "structure",
-      "description": "Use consistent formatting for emphasis and other Markdown elements throughout the document.",
-      "priority": "medium",
-      "auto_fixable": false
-    },
-    {
-      "type": "structure",
-      "description": "Consider breaking down long paragraphs into smaller sections for better readability.",
+      "description": "Use consistent formatting for all headings and subheadings to enhance readability.",
       "priority": "medium",
       "auto_fixable": false
     },
@@ -238,43 +195,49 @@
     },
     {
       "type": "readability",
-      "description": "Break up dense paragraphs into smaller, more digestible sections.",
+      "description": "Use bullet points or numbered lists to break down complex information.",
       "priority": "medium",
       "auto_fixable": false
     },
     {
       "type": "readability",
-      "description": "Use consistent and clear headings to better organize content.",
+      "description": "Add transitional phrases between sections to improve flow.",
       "priority": "medium",
       "auto_fixable": false
     },
     {
       "type": "readability",
-      "description": "Add transitional phrases to improve flow between sections.",
+      "description": "Consider simplifying technical jargon or providing definitions for complex terms.",
       "priority": "medium",
       "auto_fixable": false
     },
     {
       "type": "readability",
-      "description": "Provide definitions or explanations for technical terms and abbreviations.",
+      "description": "Remove the duplicate Table of Contents to streamline the document.",
       "priority": "medium",
       "auto_fixable": false
     },
     {
       "type": "accuracy",
-      "description": "Include the document metadata in the Markdown output to provide context.",
+      "description": "Ensure the Table of Contents reflects the original structure and includes all relevant sections.",
       "priority": "high",
       "auto_fixable": false
     },
     {
       "type": "accuracy",
-      "description": "Clearly define and structure the content sections to reflect the original organization.",
+      "description": "Include document metadata and asset information to provide a complete overview.",
       "priority": "high",
       "auto_fixable": false
     },
     {
       "type": "accuracy",
-      "description": "Add the assets section to ensure all relevant information is included.",
+      "description": "Expand the abstract to include all relevant performance metrics and implications of the findings.",
+      "priority": "high",
+      "auto_fixable": false
+    },
+    {
+      "type": "accuracy",
+      "description": "Consider adding context to the authors' contributions to enhance understanding.",
       "priority": "high",
       "auto_fixable": false
     }

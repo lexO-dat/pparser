@@ -410,7 +410,7 @@ class FormulaExtractor(BaseExtractor):
     def _generate_description(self, latex_formula: str) -> str:
         """Generate a human-readable description of the formula"""
         
-        # TODO: create better NLP technics for this part
+        # TODO: create better NLP techni1ques for this part
         
         descriptions = []
         

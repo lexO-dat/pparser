@@ -388,21 +388,3 @@ pip install -r requirements.txt
 export OPENAI_API_KEY=test-key-for-mocking
 export PYTHONPATH=/path/to/PPARSER:$PYTHONPATH
 ```
-
-## Contributing
-
-### Adding New Tests
-1. **Identify test category**: Unit, integration, performance, or CLI
-2. **Choose appropriate file**: Add to existing or create new test file
-3. **Use existing fixtures**: Leverage common test data and configuration
-4. **Follow naming conventions**: `test_*` functions, `Test*` classes
-5. **Add appropriate markers**: `@pytest.mark.unit`, `@pytest.mark.slow`, etc.
-
-### Test Review Checklist
-- [ ] Tests cover new functionality
-- [ ] Tests include error cases
-- [ ] Tests are isolated (no external dependencies)
-- [ ] Tests are fast (< 1s each for unit tests)
-- [ ] Tests have descriptive names and docstrings
-- [ ] Tests follow existing patterns and style
-- [ ] Coverage remains above threshold

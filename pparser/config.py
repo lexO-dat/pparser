@@ -119,8 +119,8 @@ class Config:
         if not self.openai_api_key:
             raise ValueError("OPENAI_API_KEY is required")
         
-        if not 0.0 <= self.openai_temperature <= 2.0:
-            raise ValueError("Temperature must be between 0.0 and 2.0")
+        if not 0.0 <= self.openai_temperature <= 1.0:
+            raise ValueError("Temperature must be between 0.0 and 10")
         
         if self.openai_max_tokens < 1:
             raise ValueError("Max tokens must be positive")

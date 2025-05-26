@@ -8,6 +8,8 @@ from pathlib import Path
 from .base import BaseAgent
 from ..extractors import ImageExtractor
 
+# TODO: This agent is sort of implemented ( i recicled some code of other proyect ) but 4o-mini i think that does not do image analysis so is a little useless right now
+# TODO: the temperature variable i think i will put it into the .env file to be more easy to change
 
 class ImageAnalysisAgent(BaseAgent):
     """Agent specialized in analyzing images and generating descriptions"""
@@ -82,26 +84,30 @@ class ImageAnalysisAgent(BaseAgent):
         height = image_info.get('height', 0)
         page_num = image_info.get('page_number', 1)
         
-        system_prompt = """You are an expert in document analysis and image description. Generate a comprehensive, descriptive alt-text for an image extracted from a PDF document.
+        system_prompt = """
+                            You are an expert in document analysis and image description. Generate a comprehensive, descriptive alt-text for an image extracted from a PDF document.
 
-Your description should:
-1. Be concise but informative (1-2 sentences)
-2. Include the likely purpose of the image in the document context
-3. Mention any text, diagrams, charts, or key visual elements
-4. Use descriptive language suitable for accessibility
-5. Consider the academic/professional context of the document
+                            Your description should:
+                            1. Be concise but informative (1-2 sentences)
+                            2. Include the likely purpose of the image in the document context
+                            3. Mention any text, diagrams, charts, or key visual elements
+                            4. Use descriptive language suitable for accessibility
+                            5. Consider the academic/professional context of the document
 
-Return only the description text, nothing else."""
+                            Return only the description text, nothing else.
+                        """
         
-        user_content = f"""Generate an enhanced description for this image:
+        user_content = f"""
+                            Generate an enhanced description for this image:
 
-Basic info: {basic_description}
-Filename: {filename}
-Dimensions: {width}x{height}
-Page: {page_num}
-Context: Image extracted from a PDF document
+                            Basic info: {basic_description}
+                            Filename: {filename}
+                            Dimensions: {width}x{height}
+                            Page: {page_num}
+                            Context: Image extracted from a PDF document
 
-Provide a descriptive alt-text."""
+                            Provide a descriptive alt-text.
+                        """
         
         messages = self._create_messages(system_prompt, user_content)
         enhanced_desc = self._invoke_llm(messages)
@@ -111,21 +117,25 @@ Provide a descriptive alt-text."""
     def _classify_image(self, image_info: Dict[str, Any], description: str) -> Dict[str, str]:
         """Classify image type and purpose"""
         
-        system_prompt = """Classify this image based on its description and context. Determine:
+        system_prompt = """
+                            Classify this image based on its description and context. Determine:
 
-1. Image type: diagram, chart, graph, photo, illustration, screenshot, formula, table, figure, other
-2. Purpose: decoration, explanation, data_visualization, reference, example, proof, other
-3. Content category: mathematical, scientific, technical, business, educational, general
+                            1. Image type: diagram, chart, graph, photo, illustration, screenshot, formula, table, figure, other
+                            2. Purpose: decoration, explanation, data_visualization, reference, example, proof, other
+                            3. Content category: mathematical, scientific, technical, business, educational, general
 
-Return your classification in this format:
-Type: [type]
-Purpose: [purpose] 
-Category: [category]"""
+                            Return your classification in this format:
+                            Type: [type]
+                            Purpose: [purpose] 
+                            Category: [category]
+                        """
         
-        user_content = f"""Classify this image:
-Description: {description}
-Filename: {image_info.get('filename', '')}
-Size: {image_info.get('width', 0)}x{image_info.get('height', 0)}"""
+        user_content = f"""
+                            Classify this image:
+                            Description: {description}
+                            Filename: {image_info.get('filename', '')}
+                            Size: {image_info.get('width', 0)}x{image_info.get('height', 0)}
+                        """
         
         messages = self._create_messages(system_prompt, user_content)
         classification_response = self._invoke_llm(messages)
@@ -180,6 +190,7 @@ class ImagePositionAgent(BaseAgent):
             temperature=0.1
         )
     
+    # TODO: debug this, somethimes it does nothing :D
     def process(self, input_data: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         """Determine where images should be placed in the document"""
         

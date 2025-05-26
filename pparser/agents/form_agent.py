@@ -2,6 +2,8 @@
 Form and survey analysis agent
 """
 
+# TODO: the temperature variable i think i will put it into the .env file to be more easy to change
+
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 
@@ -17,7 +19,7 @@ class FormAnalysisAgent(BaseAgent):
             config=config,
             name="FormAnalysisAgent",
             role="Analyze forms and convert to interactive Markdown",
-            temperature=0.1
+            temperature=0.1 # * calling .env
         )
         self.extractor = FormExtractor()
     
@@ -94,6 +96,7 @@ class FormAnalysisAgent(BaseAgent):
     def _enhance_form(self, form: Dict[str, Any]) -> Dict[str, Any]:
         """Enhance a complete form with LLM analysis"""
         
+        # TODO: remember wtf i created this variables :)
         title = form.get('title', '')
         questions = form.get('questions', [])
         instructions = form.get('instructions', [])
@@ -117,29 +120,32 @@ class FormAnalysisAgent(BaseAgent):
     def _classify_question_type(self, question_text: str, options: List[Dict[str, Any]]) -> str:
         """Classify question type using LLM"""
         
-        system_prompt = """Classify this question type based on the question text and options provided.
+        system_prompt = """
+                            Classify this question type based on the question text and options provided.
 
-Question types:
-- multiple_choice: Select one from several options
-- multiple_select: Select multiple from several options  
-- true_false: Binary true/false question
-- likert_scale: Rating scale (1-5, strongly agree to disagree, etc.)
-- fill_blank: Fill in missing information
-- short_answer: Open-ended short response
-- long_answer: Open-ended long response
-- ranking: Rank items in order
-- matching: Match items between lists
+                            Question types:
+                            - multiple_choice: Select one from several options
+                            - multiple_select: Select multiple from several options  
+                            - true_false: Binary true/false question
+                            - likert_scale: Rating scale (1-5, strongly agree to disagree, etc.)
+                            - fill_blank: Fill in missing information
+                            - short_answer: Open-ended short response
+                            - long_answer: Open-ended long response
+                            - ranking: Rank items in order
+                            - matching: Match items between lists
 
-Return only the question type, nothing else."""
+                            Return only the question type, nothing else.
+                        """
         
         options_text = '\n'.join([f"- {opt.get('text', '')}" for opt in options])
         
-        user_content = f"""Question: {question_text}
+        user_content = f"""
+                            Question: {question_text}
 
-Options:
-{options_text}
+                            Options:  {options_text}
 
-Classify the question type."""
+                            Classify the question type.
+                        """
         
         messages = self._create_messages(system_prompt, user_content)
         question_type = self._invoke_llm(messages)
@@ -153,17 +159,19 @@ Classify the question type."""
         options = question.get('options', [])
         question_type = question.get('improved_type', question.get('type', 'unknown'))
         
-        system_prompt = """Format this question as clean, interactive Markdown with proper checkboxes or formatting based on the question type.
+        system_prompt = """
+                            Format this question as clean, interactive Markdown with proper checkboxes or formatting based on the question type.
 
-Guidelines:
-- Use **bold** for question text
-- Use proper checkbox syntax: - [ ] for unchecked, - [x] for checked
-- Format options clearly and consistently
-- Add appropriate spacing and structure
-- For rating scales, use a clear scale format
-- For fill-in-the-blank, use underscores appropriately
+                            Guidelines:
+                            - Use **bold** for question text
+                            - Use proper checkbox syntax: - [ ] for unchecked, - [x] for checked
+                            - Format options clearly and consistently
+                            - Add appropriate spacing and structure
+                            - For rating scales, use a clear scale format
+                            - For fill-in-the-blank, use underscores appropriately
 
-Return only the formatted Markdown."""
+                            Return only the formatted Markdown.
+                        """
         
         user_content = f"""Format this question:
 

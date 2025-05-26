@@ -359,30 +359,29 @@ Return JSON with:
         prompt = ChatPromptTemplate.from_messages([
             SystemMessage(content="""You are an accuracy validator. Compare the Markdown output with the original content data to check for accuracy.
 
-Evaluate:
-1. Factual accuracy of converted content
-2. Preservation of key information
-3. Correct representation of data structures
-4. Maintenance of original meaning
+                                    Evaluate:
+                                    1. Factual accuracy of converted content
+                                    2. Preservation of key information
+                                    3. Correct representation of data structures
+                                    4. Maintenance of original meaning
 
-Return JSON with:
-- score: 0-100
-- accuracy_issues: Array of accuracy problems found
-- preserved_elements: Array of well-preserved content elements
-- recommendations: Array of accuracy improvement suggestions"""),
+                                    Return JSON with:
+                                    - score: 0-100
+                                    - accuracy_issues: Array of accuracy problems found
+                                    - preserved_elements: Array of well-preserved content elements
+                                    - recommendations: Array of accuracy improvement suggestions"""),
             
             HumanMessage(content=f"""
-Compare this Markdown output with the original content:
+                                    Compare this Markdown output with the original content:
 
-MARKDOWN OUTPUT:
-{markdown[:2000]}...
+                                    MARKDOWN OUTPUT:
+                                    {markdown[:2000]}...
 
-ORIGINAL CONTENT SUMMARY:
-{json.dumps({k: f"{type(v).__name__} with {len(v) if isinstance(v, (list, dict)) else 'content'}" for k, v in original_content.items()}, indent=2)}
+                                    ORIGINAL CONTENT SUMMARY:
+                                    {json.dumps({k: f"{type(v).__name__} with {len(v) if isinstance(v, (list, dict)) else 'content'}" for k, v in original_content.items()}, indent=2)}
 
-Evaluate accuracy and preservation of original content.
-""")
-        ])
+                                    Evaluate accuracy and preservation of original content.
+                                """)])
         
         try:
             response = await self.llm.ainvoke(prompt.format_messages())
@@ -489,7 +488,7 @@ Evaluate accuracy and preservation of original content.
         
         scores = []
         weights = {
-            'structure_quality': 0.25,
+            'structure_quality': 0.25, # TODO: see why this is failing
             'content_completeness': 0.30,
             'formatting_quality': 0.15,
             'asset_integrity': 0.15,

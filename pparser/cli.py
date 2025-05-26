@@ -440,11 +440,11 @@ Examples:
                 print(f"  • {feature_name.replace('_', ' ').title()}: {status_icon}")
             
             print("\nConfiguration:")
-            print(f"  • LLM Model: {self.config.llm_model}")
+            print(f"  • LLM Model: {self.config.openai_model}")
             print(f"  • Max Tokens: {self.config.max_tokens}")
             print(f"  • Temperature: {self.config.temperature}")
-            print(f"  • Image DPI: {self.config.image_dpi}")
-            print(f"  • Max Image Size: {self.config.max_image_size}")
+            # print(f"  • Image DPI: {self.config.image_dpi}")
+            # print(f"  • Max Image Size: {self.config.max_image_size}")
             
             return 0
             

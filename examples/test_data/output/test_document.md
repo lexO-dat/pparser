@@ -9,549 +9,264 @@
 - [Forms](#forms)
 
 ## Content
-See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper  April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS 138 READS 4,160 3 authors: Stefan Uhlich University of Stuttgart 67PUBLICATIONS1,229CITATIONS SEE PROFILE Franck Giron Sony Europe B.V., Zwg. Deutschland 8PUBLICATIONS380CITATIONS SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175PUBLICATIONS2,294CITATIONS SEE PROFILE All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file.
-DEEP NEURAL NETWORK BASED INSTRUMENT EXTRACTION FROM MUSIC Stefan Uhlich1, Franck Giron1and Yuki Mitsufuji2 1 Sony European Technology Center (EuTEC), Stuttgart, Germany 2 Sony Corporation, Audio Technology Development Department, Tokyo, Japan ABSTRACT This paper deals with the extraction of an instrument from music by using a deep neural network. As prior information, we only as- sume to know the instrument types that are present in the mixture and, using this information, we generate the training data from a database with solo instrument performances. The neural network is built up from rectiﬁed linear units where each hidden layer has the same number of nodes as the output layer. This allows a least squares initialization of the layer weights and speeds up the training of the network considerably compared to a traditional random initializa- tion. We give results for two mixtures, each consisting of three in- struments, and evaluate the extraction performance using BSS Eval for a varying number of hidden layers. Index Terms— Deep neural network (DNN), Instrument extrac- tion, Blind source separation (BSS) 1. INTRODUCTION In this paper, we study the extraction of a target instrument s(n) ∈R from an instantaneous, monaural music mixture x(n) ∈R, i.e., of a mixture that can be written as x(n) = s(n) + M X i=1 vi(n), (1) where vi(n) is the time signal of the ith background instrument and the mixture consists thus in a total of M +1 instruments. From x(n) we want to extract an estimate ˆs(n) of the target instrument s(n) and, therefore, we can see instrument extraction as a special case of the general blind source separation (BSS) problem [1, 2]. Various applications require such an estimate ˆs(n) ranging from Karaoke systems which use a separation into a instruments and a vocal track, see [3, 4], to upmixing where one tries to obtain a multi-channel version of the monaural mixture x(n), see [5,6]. We propose a deep neural network (DNN) for the extraction of the target instrument s(n) from x(n) as DNNs have proved to work very well in various applications and have gained a lot of interest in the last years, especially for classiﬁcation tasks in image process- ing [7, 8] and for speech recognition [9]. We use the DNN in the frequency domain to estimate a target instrument from the mixture, i.e., we train the network such that we can think of it as a “denoiser” which converts the “noisy” mixture spectrogram to the “clean” in- strument spectrogram. For the training of the network, we only as- sume to know the instrument types of the target instrument s(n) and of the other background instruments v1(n), . . . , vM(n), for exam- ple that we want to extract a piano from a mixture with a violin and a horn. This is in contrast to other proposed DNN approaches for BSS of music which are supervised in the sense that they assume to have more knowledge about the signals [10–12]. Huang et. al. used in [11, 12] a deep (recurrent) neural network for the separa- tion of two sources where the neural network is extended by a ﬁnal softmask layer to extract the source estimates and it is trained using a discriminative cost function that also tries to decrease the interfer- ence by other sources. Whereas they only know the type of the target instrument (in their case: singing voice) in [12], they assume that the background is one of 110 known karaoke songs. In contrast, we only know the instrument types that appear in the mixture and, hence, we have to use a large instrument database with solo performances from various musicians and instruments. From this database, we generate the training data that allows us to generalize to new mixtures and this instrument database with the training data generation is thus a integral part of our DNN architecture. A second contribution of the paper is the efﬁcient training of the DNN: We propose a network architecture where each hidden rectiﬁed linear unit (ReLU) layer has the same number of nodes as the output layer. This allows a least squares initialization of the network weights of each layer and, using it as starting point for the limited-memory BFGS (L-BFGS) optimizer, yields a quicker convergence to good network weights. Additionally, we noticed that this initialization often results in ﬁnal network weights which have a smaller training error than if we start the training from randomly initialized weights as we ﬁnd better local minima. The remainder of this paper is organized as follows: In Sec. 2 we describe in detail the DNN based instrument extraction where in particular Sec. 2.1 explains the network structure, Sec. 2.2 shows the generation of the training data and Sec. 2.3 details the layer-wise training procedure. In Sec. 3, we give results for two music mixtures, each consisting of three instruments, before we conclude this paper in Sec. 4 where we summarize our work and give an outlook of future steps. The following notation is used throughout this paper: x denotes a column vector and X a matrix where in particular I is the identity matrix. The matrix transpose and Euclidean norm are denoted by (.)Tand ∥.∥, respectively. Furthermore, max (x, y) is the element- wise maximum operation between x and y, and |x| returns a vector with the element-wise magnitude values of x. 2. DNN BASED INSTRUMENT EXTRACTION 2.1. General Network Structure We will explain now the proposed DNN approach for extracting the target instrument s(n) from the mixture x(n), which is also depicted in Fig. 1. The extraction is done in the frequency domain and it consists of the following three steps: (a) Feature vector generation: We use a short-time Fourier trans- form (STFT) with (possibly overlapping) rectangular windows to transform the mixture signal x(n) into the frequency domain. From this frequency representation, we build a feature vector1 x ∈R(2C+1)Lby stacking the magnitude values of the current frame and the C preceding/succeeding frames where L gives the number of magnitude values per frame. The motivation for using also the 2C neighboring frames is to provide the DNN with tem- poral context that allows it to better extract the target instrument. Please note that these context frames are chosen such that they are 1For convenience, we use in the following a simpliﬁed notation and drop the frame index for x, xk, s, ˆx and γ. 2135 978-1-4673-6997-8/15/$31.00 2015 IEEE ICASSP 2015
-Mixture x(n) ... STFT ... Magnitude STFT frames of x(n) DNN input x ∈R(2C+1)L normalized by γ W1, b1 W2, b2    WK, bK DNN with K ReLU layers DNN output ˆs ∈RL rescaled with γ ... Magnitude STFT frames of ˆs(n) ISTFT ... Recovered instrument ˆs(n) Fig. 1: Instrument extraction using a deep neural network non-overlapping2. Finally, the input vector x is normalized by a scalar γ > 0 in order to make it independent of different amplitude levels of the mixture x(n) where γ is the average Euclidean norm of the 2C + 1 magnitude frames in x. (b) DNN instrument extraction: In a second step, the normalized STFT amplitude vector x is fed to a DNN, which consists of K layers with rectiﬁed linear units (ReLU), i.e., we have xk+1 = max (Wkxk + bk, 0) , k = 1, . . . , K (2) where xk denotes the input to the kth layer and in particular x1 is the DNN input x and xK+1 the DNN output ˆs. Each ReLU layer has L nodes and the network weights {Wk, bk}k=1,...,K are trained such that the DNN outputs an estimate ˆs of the magnitude frame s ∈RL of the target instrument from the mixture vector x. We can thus think of the DNN performing a denoising of the “noisy” mixture input. DNNs with ReLU activation functions have shown very good results, see for example [13, 14], and, as each layer has L hidden units, this activation function will allow us to use a layer-wise least squares initialization as will be shown in Sec. 2.3. (c) Reconstruction of the instrument: Using the phase of the original mixture STFT and multiplying each DNN output ˆs with the energy normalization γ that was applied to the corresponding input vector, we obtain an estimate of the STFT of the target instrument s(n), which we convert back into the time domain using an inverse STFT [15]. Note that the DNN outputs ˆs, i.e., the magnitude frames of the target instrument, will be overlapping as shown in Fig. 1 if the STFT in the ﬁrst step (a) was also using overlapping windows. Please refer to [15] for the ISTFT in this case. 2.2. Training Data Generation In order to train the weights {W1, b1}, . . . , {WK, bK} of the DNN, we need a training set {x(p), s(p)}p=1,...,P of P input/target pairs where x(p)∈R(2C+1)Lis a magnitude vector of the mixture with C preceding/succeeding frames and s(p)∈RLthe corre- sponding magnitude vector of the target instrument that we want to extract. In general, there are several possibilities to generate the required material for the DNN training, which differ in the prior knowledge that we have3: For the target instrument s(n), we either only know the instrument type (e.g., piano) or we have recordings from it. For the background instruments vi(n), we either have no knowledge, we know the instrument types that occur in the mixture or we even have 2E.g., if the STFT uses a overlap of 50%, then we only take every second frame to build the feature vector x. 3Beside the discussed cases, there is also the possibility that we have knowledge about the melody of the target instrument, see for example [16]. Instrument Number of ﬁles Material length (b= Variations) Bassoon 18 1.44 hours Cello 6 1.88 hours Clarinet 14 1.15 hours Horn 14 0.82 hours Piano 89 6.12 hours Saxophone 19 1.16 hours Trumpet 16 0.38 hours Viola 13 1.61 hours Violin 12 5.60 hours Table 1: Instrument database recordings of the particular instruments that occur in the mixture. The easiest case is when we have recordings of the instrument that we want to extract and of those that occur as background in the mix- ture. The most difﬁcult case is when we only know the type of the instrument that we want to extract and do not have any knowledge about the background instruments that will appear in the mixture. In this paper, we assume that we know the instrument types of the tar- get and background, e.g., we know that we want to extract a piano from a mixture with a horn and a violin. Using this prior knowl- edge is reasonable since for many songs, we either have metadata which provides information about the instruments that occur or, in case this information is missing, could be provided by the user. As we only know the instrument types that appear in the mixture, we built a musical instrument database, see Table 1 for the details. The music pieces are stored in the free lossless audio codec (FLAC) for- mat with a sampling rate of 48kHz and contain solo performances of the instruments. For each instrument type we have several ﬁles stemming from different musicians with different instruments play- ing classical masterpieces. These variations are important as we only know the instrument types and, hence, the DNN should generalize well to new instruments of the same type. For the DNN training, we ﬁrst load from the instrument database all audio ﬁles of the instruments that occur in the mixture and resam- ple them to a lower DNN system sampling rate, where the sampling rate is chosen such that the computational complexity of the total DNN system is reduced. In a second step, we convert all signals into the frequency domain using a STFT and randomly sample from the target and background instruments P complex-valued STFT vectors n ˜s(1), . . . ,˜s(P )o and n ˜v(1) i , . . . , ˜v(P ) i o with i = 1, . . . , M where ˜s(p)∈C(2C+1)Land ˜v(p) i ∈C(2C+1)L, i.e., they also contain the 2C neighboring frames. These are now combined to form the DNN input/targets, i.e., x(p)= 1 γ(p) α(p)˜s(p) + M X i=1 α(p) i ˜v(p) i , (3a) 2136
-s(p)=α(p) γ(p) S ˜s(p) , (3b) where γ(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in α(p)˜s(p) + PM i=1α(p) i ˜v(p) i and S ∈RL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0 . The scalars α(p), α(p) 1, . . . , α(p) Mdenote the random amplitudes of each instru- ment which stem from a uniform distribution with support [0.01, 1]. The normalization γ(p)is used to yield a DNN input that is inde- pendent of different amplitude levels of the mixture. Please note, however, that each instrument inside the mixture has a different amplitude α(p), α(p) 1, . . . , α(p) M, i.e., the DNN learns to extract the target instrument even if it has a varying amplitude compared to the background instruments. 2.3. DNN Training Using the dataset that we generated as outlined above, we can learn the network weights such that the sum-of-squared errors (SSE) be- tween the P targets s(p)and the DNN outputs ˆs(p)is minimized4. Due to the special network structure and the use of ReLU (cf. Sec. 2.1), we can perform a layer-wise training of the DNN. Each time a new layer is added, we ﬁrst initialize the weights using least squares estimates of Wk and bk by neglecting the nonlinear rectiﬁer function. As the target vectors s(p)are non-negative, we know that the SSE after adding the ReLU activation function can not increase and, hence, using the least-squares solution as initialization results in a good starting point for the L-BFGS solver that we then use. In the following, we will now describe in more details the two steps that we perform if a new layer is added: (a) Weight initialization: For the kth layer, we solve the optimization problem {Winit k, binit k} = arg min Wk,bk P X p=1 s(p) −  Wkx(p) k + bk  2 (4) where x(p) k denotes either the pth DNN input for k = 1 or the output of the (k −1)th layer if k > 1. Using (4), we choose the initial weights of the network such that they are the optimal linear least squares reconstruction of the targets {s(p)}p=1,...,P from the fea- tures {x(p) k}p=1,...,P . As we know that all elements of the target vector s(p)are non-negative, it is obvious that the total error can not increase by adding the ReLU activation function and, therefore, this initialization is a good starting point for the iterative training in step (b). The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k. (b) L-BFGS training: Starting from the initialization (a), we use a L-BFGS training with the SSE cost function to update the complete network, i.e., to update {W1, b1}, . . ., {Wk, bk}. 4We also tested the weighted Euclidean distance [19] as it showed good results for speech enhancement. However, we could not see an improvement and therefore use the SSE cost function in the following. These two steps are done K times in order to result in a network with K ReLU layers. Finally, after adding all layers, we do a ﬁne tuning of the complete network, where we again use L-BFGS. Using this procedure, we train the DNN as a denoising network as each layer, when it is added to the network, tries to recover the original targets s(p)from the output of the previous layer. This is similar to stacked denoising autoencoders, see [20, 21]. In our ex- periments, we have noticed that using the least squares initialization is advantageous with respect to the following two aspects if com- pared to a random initialization: First, it reduces the training time for the network considerably as we start the L-BFGS optimizer from a good initial value and, second, we found that we do not have the problem of converging to poor local minima which was sometimes the case for the random initialization. In the next section, we will show the beneﬁt of using the proposed initialization. 3. SEPARATION RESULTS In the following, we will now give results for the proposed DNN ap- proach. We consider two monaural music mixtures from the TRIOS dataset [22], each composed of three instruments: the “Brahms” trio consisting of a horn, a piano and a violin and the “Lussier” trio with a bassoon, a piano and a trumpet. We use the following settings for our experiments: The DNN system sampling rate (cf. Sec. 2.2) was chosen to be 32kHz which is a compromise between the audio quality of the extracted instru- ment and the DNN training time. For each frame, we have L = 513 magnitude values and we augment the input vector by C = 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN. Hence, one DNN input vector x has a length of (2C + 1)L = 3591 elements and corresponds to 224 milliseconds of the mixture signal. For the training, we use P = 106samples and the gen- erated training material has thus a length of 62.2 hours. During the layerwise training, we use 600 L-BFGS iterations for each new layer and the ﬁnal ﬁne tuning consists of 3000 additional L-BFGS iterations for the complete network such that in total we execute 5  600 + 3000 = 6000 L-BFGS iterations. Table 2 shows the BSS Eval values [23], i.e., the signal-to- distortion ratio (SDR), signal-to-interference ratio (SIR) and signal- to-artifact ratio (SAR) values after the addition of each ReLU layer. Besides the raw DNN outputs, we also give the BSS Eval values if we use a Wiener ﬁlter to combine the DNN outputs of the three instruments. This additional post-processing step allows an en- hancement of the source separation results since, from the raw DNN outputs, it computes for each instrument a softmask and applies it to the original mixture spectrogram. Looking at the results in Table 2, we can see that there is a noticeable improvement when adding the ﬁrst three layers but the difference becomes smaller for additional layers. For “Brahms”, the best results are obtained after adding all ﬁve layers and performing the ﬁnal ﬁne tuning. This is different for “Lussier”: For the trumpet, we can see that the network is starting to overﬁt to the training set when adding more than three layers as the SDR/SIR values start to decrease. The problem is the limited amount of material for the trumpet (22.5 minutes of solo performances, see Table 1), which is too small. Interestingly, also the DNNs for the other two instruments start to overﬁt which is probably also due to the trumpet in the mixture. From the results we can conclude that having sufﬁcient material for each instrument is vital if only the instrument type is known since only this ensures a good source separation quality and avoids overﬁtting. Table 3 shows for comparison the BSS Eval results for three unsupervised NMF based source separation approaches: • “MFCC kmeans [17]”: This approach uses a Mel ﬁlter bank of size 30 which is applied to the frequency basis vectors of the NMF decomposition in order to compute MFCCs. These are 2137
-Instrument Output After 1st layer After 2nd layer After 3rd layer After 4th layer After 5th layer After ﬁne tuning SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn Raw output 3.30 4.79 9.93 5.15 8.19 8.73 5.29 8.50 8.69 5.38 8.66 8.69 5.53 9.19 8.47 5.70 9.57 8.44 WF output 4.05 5.63 10.25 6.36 10.20 9.08 6.51 10.81 8.87 6.58 10.99 8.87 6.71 11.44 8.79 6.80 11.68 8.79 Piano Raw output 0.85 1.93 9.58 2.34 4.37 7.97 3.16 6.60 6.64 3.26 6.61 6.82 3.34 6.86 6.71 3.47 7.34 6.51 WF output 2.62 4.54 8.41 4.13 7.53 7.49 4.36 9.07 6.66 4.40 9.13 6.67 4.47 9.41 6.62 4.68 10.13 6.54 Violin Raw output −0.23 1.88 6.11 3.06 9.52 4.63 3.49 9.21 5.33 3.50 9.23 5.34 3.57 9.44 5.33 3.90 10.34 5.41 WF output 3.62 8.57 5.86 5.27 14.10 6.05 6.04 15.19 6.74 6.08 15.30 6.76 6.02 15.36 6.68 6.11 15.60 6.75 Lussier Bassoon Raw output 3.05 5.48 7.82 3.47 6.51 7.32 3.62 7.00 7.07 3.68 7.14 7.04 3.72 7.31 6.96 3.39 7.08 6.60 WF output 4.38 7.55 7.94 4.40 9.38 6.53 4.36 9.71 6.30 4.42 9.75 6.36 4.34 9.75 6.26 3.92 9.37 5.85 Piano Raw output 1.57 3.30 8.08 1.69 4.06 6.90 1.87 4.21 7.08 1.94 4.31 7.06 1.93 4.38 6.92 1.97 4.65 6.61 WF output 3.12 6.07 7.14 3.33 6.60 6.95 3.23 6.44 6.94 3.32 6.64 6.89 3.27 6.69 6.75 2.99 6.64 6.29 Trumpet Raw output 5.01 9.37 7.47 6.28 11.26 8.25 6.61 11.67 8.51 6.56 11.54 8.52 6.55 11.57 8.49 6.38 11.49 8.27 WF output 6.00 10.18 8.49 7.14 12.86 8.71 7.38 13.55 8.77 7.23 13.43 8.62 7.22 13.49 8.58 7.23 13.54 8.57 Table 2: BSS Eval results for DNN instrument extraction (“Brahms” and “Lussier” trio, all values are given in dB) Instrument MFCC kmeans [17] Mel NMF [17] Shifted-NMF [18] DNN with WF SDR SIR SAR SDR SIR SAR SDR SIR SAR SDR SIR SAR Brahms Horn 3.87 5.76 9.41 4.17 5.83 10.17 2.95 3.34 15.20 6.80 11.68 8.79 Piano 3.30 4.42 10.76 −0.10 0.21 14.39 3.78 5.59 9.50 4.68 10.13 6.54 Violin −8.35 −7.89 10.21 9.69 19.79 10.19 7.66 10.96 10.74 6.11 15.60 6.75 Average −0.39 0.76 10.13 4.59 8.61 11.58 4.80 6.63 11.81 5.86 12.47 7.36 Lussier Bassoon 1.85 11.67 2.61 0.15 0.75 11.72 −0.83 −0.60 15.43 3.92 9.37 5.85 Piano 4.66 6.28 10.64 4.56 8.00 7.83 2.54 5.14 7.16 2.99 6.64 6.29 Trumpet −1.73 −1.29 12.18 8.46 18.12 9.05 6.57 7.39 14.95 7.23 13.54 8.57 Average 1.59 5.55 8.48 4.39 8.96 9.53 2.76 3.98 12.51 4.71 9.85 6.90 Table 3: Comparison of BSS Eval results (all values are given in dB) then clustered via kmeans. For the Mel ﬁlter bank, we use the implementation [24] of [25]. • “Mel NMF [17]”: This approach also applies a Mel ﬁlter bank of size 30 to the original frequency basis vectors and uses a sec- ond NMF to perform the clustering. • “Shifted-NMF [18]”: For this approach, we use a constant Q transform matrix with minimal frequency 55 Hz and 24 fre- quency bins per octave. The shifted-NMF decomposition is al- lowed to use a maximum of 24 shifts. The constant Q transform source code was kindly provided by D. FitzGerald and we use the Tensor toolbox [26,27] for the shifted-NMF implementation. The best SDR values in Table 3 are emphasized in bold face and we can observe that, although our DNN approach not always gives the best individual SDR per instrument, it has the best average SDR for both mixtures since it is capable of extracting three sources with similar quality. This is not the case for the NMF approaches which have one instrument with a low SIR value, i.e., one instrument that is not well separated from the others.5 In order to see the beneﬁt of the least squares initialization from Sec. 2.3 we show in Fig. 2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec. 2.2. The denominator of J gives the SSE of a baseline system where the DNN is perform- ing an identity transform. From Fig. 2 we can see that the error is signiﬁcantly decreased whenever a new layer is added as the error J exhibits downward “jumps”. These “jumps” are due to the least squares initialization of the network weights. For example, consider the training error in Fig. 2 of the network that extracts the piano: When the ﬁrst layer is added, we have an initial error of J = 0.23, which means that, using the least squares initialization from Sec. 2.3, we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1 = 0. Would we have used the 5Please note that the considered NMF approaches are only assuming to know the number of sources, i.e., they use less prior knowledge than our DNN approach. We also tried the supervised NMF approach from [28] where the frequency basis vectors are pre-trained on our instrument database. How- ever, this supervised NMF approach resulted in signiﬁcant worse SDR values as the learned frequency bases for the instruments are correlated which intro- duces interference. 600 1200 1800 2400 3000 6000 0.08 0.1 0.12 0.14 0.16 0.18 0.2 0.22 Number of L−BFGS iterations Normalized training error J 2nd layer added 3rd layer added 4th layer added 5th layer added Start fine tuning Piano Horn Violin Fig. 2: Evolution of training error for “Brahms” baseline initialization, then a simulation showed that it would have taken us 980 additional L-BFGS iterations to reach the error value of the least squares initialization. These L-BFGS iterations can be saved and, therefore, we converge much faster to a network with a good instrument extraction performance. 4. CONCLUSIONS AND FUTURE WORK In this paper, we used a deep neural network for the extraction of an instrument from music. Using only the knowledge of the instrument types, we generated the training data from a database with solo in- strument performances and the network is trained layer-wise with a least-squares initialization of the weights. During our experiments, we noticed that the material length and quality of the solo performances is important as only sufﬁcient ma- terial allows the neural network to generalize to new, i.e., before unseen, instruments. We therefore plan to incorporate the “RWC Music Instrument Sounds” database [29] as it contains high quality samples from many instruments. Furthermore, our data generation process in Sec. 2.2 currently does not exploit music theory when generating the mixtures and we think that, taking such knowledge into account, should generate training data that is better suited for the instrument extraction task. 2138
-5. REFERENCES [1] P. Comon and C. Jutten, Eds., Handbook of Blind Source Sep- aration: Independent Component Analysis and Applications, Academic Press, 2010. [2] G. R. Naik and W. Wang, Eds., Blind Source Separation: Advances in Theory, Algorithms and Applications, Springer, 2014. [3] Z. Raﬁi and B. Pardo, “Repeating pattern extraction technique (REPET): A simple method for music/voice separation,” IEEE Transactions on Audio, Speech, and Language Processing, vol. 21, no. 1, pp. 73–84, 2013. [4] J.-L. Durrieu, B. David, and G. Richard, “A musically moti- vated mid-level representation for pitch estimation and musical audio source separation,” IEEE Journal on Selected Topics on Signal Processing, vol. 5, pp. 1180–1191, 2011. [5] D. FitzGerald, “Upmixing from mono - a source separation ap- proach,” Proc. 17th International Conference on Digital Signal Processing, 2011. [6] D. FitzGerald, “The good vibrations problem,” 134th AES Convention, e-brief, 2013. [7] A. Krizhevsky, I. Sutskever, and G. E. Hinton, “Imagenet clas- siﬁcation with deep convolutional neural networks,” in Ad- vances in neural information processing systems, 2012, pp. 1097–1105. [8] C. Farabet, C. Couprie, L. Najman, and Y. LeCun, “Learning hierarchical features for scene labeling,” IEEE Transactions on Pattern Analysis and Machine Intelligence, vol. 35, no. 8, pp. 1915–1929, 2013. [9] G. Hinton, L. Deng, D. Yu, G. E. Dahl, A.-R. Mohamed, N. Jaitly, A. Senior, V. Vanhoucke, P. Nguyen, T. N. Sainath, et al., “Deep neural networks for acoustic modeling in speech recognition: The shared views of four research groups,” IEEE Signal Processing Magazine, vol. 29, no. 6, pp. 82–97, 2012. [10] E. M. Grais, M. U. Sen, and H. Erdogan, “Deep neu- ral networks for single channel source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Process- ing (ICASSP), pp. 3734–3738, 2014. [11] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Deep learning for monaural speech sepa- ration,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 1562–1566, 2014. [12] P.-S. Huang, M. Kim, M. Hasegawa-Johnson, and P. Smaragdis, “Singing-voice separation from monaural recordings using deep recurrent neural networks,” Interna- tional Society for Music Information Retrieval Conference (ISMIR), 2014. [13] X. Glorot, A. Bordes, and Y. Bengio, “Deep sparse rectiﬁer networks,” Proceedings of the 14th International Conference on Artiﬁcial Intelligence and Statistics, vol. 15, pp. 315–323, 2011. [14] M. D. Zeiler, M. Ranzato, R. Monga, M. Mao, K. Yang, Q. V. Le, P. Nguyen, A. Senior, V. Vanhoucke, J. Dean, et al., “On rectiﬁed linear units for speech processing,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 3517–3521, 2013. [15] B. Yang, “A study of inverse short-time Fourier transform,” Proc. IEEE Conference on Acoustics, Speech, and Signal Pro- cessing (ICASSP), pp. 3541–3544, 2008. [16] P. Smaragdis and G. J. Mysore, “Separation by “humming”: User-guided sound extraction from monophonic mixtures,” IEEE Workshop on Applications of Signal Processing to Au- dio and Acoustics, pp. 69–72, 2009. [17] M. Spiertz and V. Gnann, “Source-ﬁlter based clustering for monaural blind source separation,” Proc. Int. Conference on Digital Audio Effects, 2009. [18] R. Jaiswal, D. FitzGerald, D. Barry, E. Coyle, and S. Rickard, “Clustering NMF basis functions using shifted NMF for monaural sound source separation,” Proc. IEEE Conference on Acoustics, Speech, and Signal Processing (ICASSP), pp. 245– 248, 2011. [19] P. C. Loizou, “Speech enhancement based on perceptually mo- tivated Bayesian estimators of the magnitude spectrum,” IEEE Transactions on Speech and Audio Processing, vol. 13, no. 5, pp. 857–869, 2005. [20] P. Vincent, H. Larochelle, Y. Bengio, and P.-A. Manzagol, “Ex- tracting and composing robust features with denoising autoen- coders,” Proceedings of the International Conference on Ma- chine Learning, pp. 1096–1103, 2008. [21] M. Chen, Z. Xu, K. Weinberger, and F. Sha, “Marginalized denoising autoencoders for domain adaptation,” Proceedings of the International Conference on Machine Learning, 2012. [22] J. Fritsch, “High quality musical audio source separation,” Master’s Thesis, UPMC / IRCAM / Telecom ParisTech, 2012. [23] E. Vincent, R. Gribonval, and C. Fevotte, “Performance mea- surement in blind audio source separation,” IEEE Transactions on Audio, Speech and Language Processing, vol. 14, no. 4, pp. 1462–1469, 2006. [24] P. Brady, “Matlab Mel ﬁlter implementation,” http://www.mathworks.com/matlabcentral/ fileexchange/23179-melfilter, 2014, [Online]. [25] F. Zheng, G. Zhang, and Z. Song, “Comparison of different implementations of MFCC,” Journal of Computer Science and Technology, vol. 16, no. 6, pp. 582–589, September 2001. [26] B. W. Bader and T. G. Kolda, “MATLAB tensor toolbox version 2.5,” http://www.sandia.gov/˜tgkolda/ TensorToolbox/, January 2012, [Online]. [27] B. W. Bader and T. G. Kolda, “Algorithm 862: MATLAB ten- sor classes for fast algorithm prototyping,” ACM Transactions on Mathematical Software, vol. 32, no. 4, pp. 635–653, De- cember 2006. [28] E. M. Grais and H. Erdogan, “Single channel speech music separation using nonnegative matrix factorization and spectral mask,” Digital Signal Processing (DSP), 2011 17th Interna- tional Conference on IEEE, pp. 1–6, 2011. [29] M. Goto, H. Hashiguchi, T. Nishimura, and R. Oka, “RWC Music Database: Music Genre Database and Musical Instru- ment Sound Database,” Proc. of the International Conference on Music Information Retrieval (ISMIR), pp. 229–230, 2003. 2139 View publication stats
+Provided proper attribution is provided, Google hereby grants permission to reproduce the tables and figures in this paper solely for use in journalistic or scholarly works. Attention Is All You Need Ashish Vaswani∗ Google Brain avaswani@google.com Noam Shazeer∗ Google Brain noam@google.com Niki Parmar∗ Google Research nikip@google.com Jakob Uszkoreit∗ Google Research usz@google.com Llion Jones∗ Google Research llion@google.com Aidan N. Gomez∗† University of Toronto aidan@cs.toronto.edu Łukasz Kaiser∗ Google Brain lukaszkaiser@google.com Illia Polosukhin∗‡ illia.polosukhin@gmail.com Abstract The dominant sequence transduction models are based on complex recurrent or convolutional neural networks that include an encoder and a decoder. The best performing models also connect the encoder and decoder through an attention mechanism. We propose a new simple network architecture, the Transformer, based solely on attention mechanisms, dispensing with recurrence and convolutions entirely. Experiments on two machine translation tasks show these models to be superior in quality while being more parallelizable and requiring significantly less time to train. Our model achieves 28.4 BLEU on the WMT 2014 English- to-German translation task, improving over the existing best results, including ensembles, by over 2 BLEU. On the WMT 2014 English-to-French translation task, our model establishes a new single-model state-of-the-art BLEU score of 41.8 after training for 3.5 days on eight GPUs, a small fraction of the training costs of the best models from the literature. We show that the Transformer generalizes well to other tasks by applying it successfully to English constituency parsing both with large and limited training data. ∗Equal contribution. Listing order is random. Jakob proposed replacing RNNs with self-attention and started the effort to evaluate this idea. Ashish, with Illia, designed and implemented the first Transformer models and has been crucially involved in every aspect of this work. Noam proposed scaled dot-product attention, multi-head attention and the parameter-free position representation and became the other person involved in nearly every detail. Niki designed, implemented, tuned and evaluated countless model variants in our original codebase and tensor2tensor. Llion also experimented with novel model variants, was responsible for our initial codebase, and efficient inference and visualizations. Lukasz and Aidan spent countless long days designing various parts of and implementing tensor2tensor, replacing our earlier codebase, greatly improving results and massively accelerating our research. †Work performed while at Google Brain. ‡Work performed while at Google Research. 31st Conference on Neural Information Processing Systems (NIPS 2017), Long Beach, CA, USA. arXiv:1706.03762v7 [cs.CL] 2 Aug 2023
+1 Introduction Recurrent neural networks, long short-term memory [13] and gated recurrent [7] neural networks in particular, have been firmly established as state of the art approaches in sequence modeling and transduction problems such as language modeling and machine translation [35, 2, 5]. Numerous efforts have since continued to push the boundaries of recurrent language models and encoder-decoder architectures [38, 24, 15]. Recurrent models typically factor computation along the symbol positions of the input and output sequences. Aligning the positions to steps in computation time, they generate a sequence of hidden states ht, as a function of the previous hidden state ht−1 and the input for position t. This inherently sequential nature precludes parallelization within training examples, which becomes critical at longer sequence lengths, as memory constraints limit batching across examples. Recent work has achieved significant improvements in computational efficiency through factorization tricks [21] and conditional computation [32], while also improving model performance in case of the latter. The fundamental constraint of sequential computation, however, remains. Attention mechanisms have become an integral part of compelling sequence modeling and transduc- tion models in various tasks, allowing modeling of dependencies without regard to their distance in the input or output sequences [2, 19]. In all but a few cases [27], however, such attention mechanisms are used in conjunction with a recurrent network. In this work we propose the Transformer, a model architecture eschewing recurrence and instead relying entirely on an attention mechanism to draw global dependencies between input and output. The Transformer allows for significantly more parallelization and can reach a new state of the art in translation quality after being trained for as little as twelve hours on eight P100 GPUs. 2 Background The goal of reducing sequential computation also forms the foundation of the Extended Neural GPU [16], ByteNet [18] and ConvS2S [9], all of which use convolutional neural networks as basic building block, computing hidden representations in parallel for all input and output positions. In these models, the number of operations required to relate signals from two arbitrary input or output positions grows in the distance between positions, linearly for ConvS2S and logarithmically for ByteNet. This makes it more difficult to learn dependencies between distant positions [12]. In the Transformer this is reduced to a constant number of operations, albeit at the cost of reduced effective resolution due to averaging attention-weighted positions, an effect we counteract with Multi-Head Attention as described in section 3.2. Self-attention, sometimes called intra-attention is an attention mechanism relating different positions of a single sequence in order to compute a representation of the sequence. Self-attention has been used successfully in a variety of tasks including reading comprehension, abstractive summarization, textual entailment and learning task-independent sentence representations [4, 27, 28, 22]. End-to-end memory networks are based on a recurrent attention mechanism instead of sequence- aligned recurrence and have been shown to perform well on simple-language question answering and language modeling tasks [34]. To the best of our knowledge, however, the Transformer is the first transduction model relying entirely on self-attention to compute representations of its input and output without using sequence- aligned RNNs or convolution. In the following sections, we will describe the Transformer, motivate self-attention and discuss its advantages over models such as [17, 18] and [9]. 3 Model Architecture Most competitive neural sequence transduction models have an encoder-decoder structure [5, 2, 35]. Here, the encoder maps an input sequence of symbol representations (x1, ..., xn) to a sequence of continuous representations z = (z1, ..., zn). Given z, the decoder then generates an output sequence (y1, ..., ym) of symbols one element at a time. At each step the model is auto-regressive [10], consuming the previously generated symbols as additional input when generating the next. 2
+Figure 1: The Transformer - model architecture. The Transformer follows this overall architecture using stacked self-attention and point-wise, fully connected layers for both the encoder and decoder, shown in the left and right halves of Figure 1, respectively. 3.1 Encoder and Decoder Stacks Encoder: The encoder is composed of a stack of N = 6 identical layers. Each layer has two sub-layers. The first is a multi-head self-attention mechanism, and the second is a simple, position- wise fully connected feed-forward network. We employ a residual connection [11] around each of the two sub-layers, followed by layer normalization [1]. That is, the output of each sub-layer is LayerNorm(x + Sublayer(x)), where Sublayer(x) is the function implemented by the sub-layer itself. To facilitate these residual connections, all sub-layers in the model, as well as the embedding layers, produce outputs of dimension dmodel = 512. Decoder: The decoder is also composed of a stack of N = 6 identical layers. In addition to the two sub-layers in each encoder layer, the decoder inserts a third sub-layer, which performs multi-head attention over the output of the encoder stack. Similar to the encoder, we employ residual connections around each of the sub-layers, followed by layer normalization. We also modify the self-attention sub-layer in the decoder stack to prevent positions from attending to subsequent positions. This masking, combined with fact that the output embeddings are offset by one position, ensures that the predictions for position i can depend only on the known outputs at positions less than i. 3.2 Attention An attention function can be described as mapping a query and a set of key-value pairs to an output, where the query, keys, values, and output are all vectors. The output is computed as a weighted sum 3
+Scaled Dot-Product Attention Multi-Head Attention Figure 2: (left) Scaled Dot-Product Attention. (right) Multi-Head Attention consists of several attention layers running in parallel. of the values, where the weight assigned to each value is computed by a compatibility function of the query with the corresponding key. 3.2.1 Scaled Dot-Product Attention We call our particular attention "Scaled Dot-Product Attention" (Figure 2). The input consists of queries and keys of dimension dk, and values of dimension dv. We compute the dot products of the query with all keys, divide each by√dk, and apply a softmax function to obtain the weights on the values. In practice, we compute the attention function on a set of queries simultaneously, packed together into a matrix Q. The keys and values are also packed together into matrices K and V . We compute the matrix of outputs as: Attention(Q, K, V ) = softmax(QKT √dk )V (1) The two most commonly used attention functions are additive attention [2], and dot-product (multi- plicative) attention. Dot-product attention is identical to our algorithm, except for the scaling factor of 1 √dk . Additive attention computes the compatibility function using a feed-forward network with a single hidden layer. While the two are similar in theoretical complexity, dot-product attention is much faster and more space-efficient in practice, since it can be implemented using highly optimized matrix multiplication code. While for small values of dk the two mechanisms perform similarly, additive attention outperforms dot product attention without scaling for larger values of dk [3]. We suspect that for large values of dk, the dot products grow large in magnitude, pushing the softmax function into regions where it has extremely small gradients4. To counteract this effect, we scale the dot products by 1 √dk . 3.2.2 Multi-Head Attention Instead of performing a single attention function with dmodel-dimensional keys, values and queries, we found it beneficial to linearly project the queries, keys and values h times with different, learned linear projections to dk, dk and dv dimensions, respectively. On each of these projected versions of queries, keys and values we then perform the attention function in parallel, yielding dv-dimensional 4To illustrate why the dot products get large, assume that the components of q and k are independent random variables with mean 0 and variance 1. Then their dot product, q  k =Pdk i=1qiki, has mean 0 and variance dk. 4
+output values. These are concatenated and once again projected, resulting in the final values, as depicted in Figure 2. Multi-head attention allows the model to jointly attend to information from different representation subspaces at different positions. With a single attention head, averaging inhibits this. MultiHead(Q, K, V ) = Concat(head1, ..., headh)WO where headi = Attention(QWQ i, KW K i, V W V i) Where the projections are parameter matrices WQ i ∈Rdmodeldk, WK i ∈Rdmodeldk, WV i ∈Rdmodeldv and WO∈Rhdvdmodel. In this work we employ h = 8 parallel attention layers, or heads. For each of these we use dk = dv = dmodel/h = 64. Due to the reduced dimension of each head, the total computational cost is similar to that of single-head attention with full dimensionality. 3.2.3 Applications of Attention in our Model The Transformer uses multi-head attention in three different ways: • In "encoder-decoder attention" layers, the queries come from the previous decoder layer, and the memory keys and values come from the output of the encoder. This allows every position in the decoder to attend over all positions in the input sequence. This mimics the typical encoder-decoder attention mechanisms in sequence-to-sequence models such as [38, 2, 9]. • The encoder contains self-attention layers. In a self-attention layer all of the keys, values and queries come from the same place, in this case, the output of the previous layer in the encoder. Each position in the encoder can attend to all positions in the previous layer of the encoder. • Similarly, self-attention layers in the decoder allow each position in the decoder to attend to all positions in the decoder up to and including that position. We need to prevent leftward information flow in the decoder to preserve the auto-regressive property. We implement this inside of scaled dot-product attention by masking out (setting to −∞) all values in the input of the softmax which correspond to illegal connections. See Figure 2. 3.3 Position-wise Feed-Forward Networks In addition to attention sub-layers, each of the layers in our encoder and decoder contains a fully connected feed-forward network, which is applied to each position separately and identically. This consists of two linear transformations with a ReLU activation in between. FFN(x) = max(0, xW1 + b1)W2 + b2 (2) While the linear transformations are the same across different positions, they use different parameters from layer to layer. Another way of describing this is as two convolutions with kernel size 1. The dimensionality of input and output is dmodel = 512, and the inner-layer has dimensionality dff = 2048. 3.4 Embeddings and Softmax Similarly to other sequence transduction models, we use learned embeddings to convert the input tokens and output tokens to vectors of dimension dmodel. We also use the usual learned linear transfor- mation and softmax function to convert the decoder output to predicted next-token probabilities. In our model, we share the same weight matrix between the two embedding layers and the pre-softmax linear transformation, similar to [30]. In the embedding layers, we multiply those weights by√dmodel. 5
+Table 1: Maximum path lengths, per-layer complexity and minimum number of sequential operations for different layer types. n is the sequence length, d is the representation dimension, k is the kernel size of convolutions and r the size of the neighborhood in restricted self-attention. Layer Type Complexity per Layer Sequential Maximum Path Length Operations Self-Attention O(n2 d) O(1) O(1) Recurrent O(n  d2) O(n) O(n) Convolutional O(k  n  d2) O(1) O(logk(n)) Self-Attention (restricted) O(r  n  d) O(1) O(n/r) 3.5 Positional Encoding Since our model contains no recurrence and no convolution, in order for the model to make use of the order of the sequence, we must inject some information about the relative or absolute position of the tokens in the sequence. To this end, we add "positional encodings" to the input embeddings at the bottoms of the encoder and decoder stacks. The positional encodings have the same dimension dmodel as the embeddings, so that the two can be summed. There are many choices of positional encodings, learned and fixed [9]. In this work, we use sine and cosine functions of different frequencies: PE(pos,2i) = sin(pos/100002i/dmodel) PE(pos,2i+1) = cos(pos/100002i/dmodel) where pos is the position and i is the dimension. That is, each dimension of the positional encoding corresponds to a sinusoid. The wavelengths form a geometric progression from 2π to 10000  2π. We chose this function because we hypothesized it would allow the model to easily learn to attend by relative positions, since for any fixed offset k, PEpos+k can be represented as a linear function of PEpos. We also experimented with using learned positional embeddings [9] instead, and found that the two versions produced nearly identical results (see Table 3 row (E)). We chose the sinusoidal version because it may allow the model to extrapolate to sequence lengths longer than the ones encountered during training. 4 Why Self-Attention In this section we compare various aspects of self-attention layers to the recurrent and convolu- tional layers commonly used for mapping one variable-length sequence of symbol representations (x1, ..., xn) to another sequence of equal length (z1, ..., zn), with xi, zi ∈Rd, such as a hidden layer in a typical sequence transduction encoder or decoder. Motivating our use of self-attention we consider three desiderata. One is the total computational complexity per layer. Another is the amount of computation that can be parallelized, as measured by the minimum number of sequential operations required. The third is the path length between long-range dependencies in the network. Learning long-range dependencies is a key challenge in many sequence transduction tasks. One key factor affecting the ability to learn such dependencies is the length of the paths forward and backward signals have to traverse in the network. The shorter these paths between any combination of positions in the input and output sequences, the easier it is to learn long-range dependencies [12]. Hence we also compare the maximum path length between any two input and output positions in networks composed of the different layer types. As noted in Table 1, a self-attention layer connects all positions with a constant number of sequentially executed operations, whereas a recurrent layer requires O(n) sequential operations. In terms of computational complexity, self-attention layers are faster than recurrent layers when the sequence 6
+length n is smaller than the representation dimensionality d, which is most often the case with sentence representations used by state-of-the-art models in machine translations, such as word-piece [38] and byte-pair [31] representations. To improve computational performance for tasks involving very long sequences, self-attention could be restricted to considering only a neighborhood of size r in the input sequence centered around the respective output position. This would increase the maximum path length to O(n/r). We plan to investigate this approach further in future work. A single convolutional layer with kernel width k < n does not connect all pairs of input and output positions. Doing so requires a stack of O(n/k) convolutional layers in the case of contiguous kernels, or O(logk(n)) in the case of dilated convolutions [18], increasing the length of the longest paths between any two positions in the network. Convolutional layers are generally more expensive than recurrent layers, by a factor of k. Separable convolutions [6], however, decrease the complexity considerably, to O(k  n  d + n  d2). Even with k = n, however, the complexity of a separable convolution is equal to the combination of a self-attention layer and a point-wise feed-forward layer, the approach we take in our model. As side benefit, self-attention could yield more interpretable models. We inspect attention distributions from our models and present and discuss examples in the appendix. Not only do individual attention heads clearly learn to perform different tasks, many appear to exhibit behavior related to the syntactic and semantic structure of the sentences. 5 Training This section describes the training regime for our models. 5.1 Training Data and Batching We trained on the standard WMT 2014 English-German dataset consisting of about 4.5 million sentence pairs. Sentences were encoded using byte-pair encoding [3], which has a shared source- target vocabulary of about 37000 tokens. For English-French, we used the significantly larger WMT 2014 English-French dataset consisting of 36M sentences and split tokens into a 32000 word-piece vocabulary [38]. Sentence pairs were batched together by approximate sequence length. Each training batch contained a set of sentence pairs containing approximately 25000 source tokens and 25000 target tokens. 5.2 Hardware and Schedule We trained our models on one machine with 8 NVIDIA P100 GPUs. For our base models using the hyperparameters described throughout the paper, each training step took about 0.4 seconds. We trained the base models for a total of 100,000 steps or 12 hours. For our big models,(described on the bottom line of table 3), step time was 1.0 seconds. The big models were trained for 300,000 steps (3.5 days). 5.3 Optimizer We used the Adam optimizer [20] with β1 = 0.9, β2 = 0.98 and ϵ = 10−9. We varied the learning rate over the course of training, according to the formula: lrate = d−0.5 model min(step_num−0.5, step_num  warmup_steps−1.5) (3) This corresponds to increasing the learning rate linearly for the first warmup_steps training steps, and decreasing it thereafter proportionally to the inverse square root of the step number. We used warmup_steps = 4000. 5.4 Regularization We employ three types of regularization during training: 7
+Table 2: The Transformer achieves better BLEU scores than previous state-of-the-art models on the English-to-German and English-to-French newstest2014 tests at a fraction of the training cost. Model BLEU Training Cost (FLOPs) EN-DE EN-FR EN-DE EN-FR ByteNet [18] 23.75 Deep-Att + PosUnk [39] 39.2 1.0  1020 GNMT + RL [38] 24.6 39.92 2.3  1019 1.4  1020 ConvS2S [9] 25.16 40.46 9.6  1018 1.5  1020 MoE [32] 26.03 40.56 2.0  1019 1.2  1020 Deep-Att + PosUnk Ensemble [39] 40.4 8.0  1020 GNMT + RL Ensemble [38] 26.30 41.16 1.8  1020 1.1  1021 ConvS2S Ensemble [9] 26.36 41.29 7.7  1019 1.2  1021 Transformer (base model) 27.3 38.1 3.3  1018 Transformer (big) 28.4 41.8 2.3  1019 Residual Dropout We apply dropout [33] to the output of each sub-layer, before it is added to the sub-layer input and normalized. In addition, we apply dropout to the sums of the embeddings and the positional encodings in both the encoder and decoder stacks. For the base model, we use a rate of Pdrop = 0.1. Label Smoothing During training, we employed label smoothing of value ϵls = 0.1 [36]. This hurts perplexity, as the model learns to be more unsure, but improves accuracy and BLEU score. 6 Results 6.1 Machine Translation On the WMT 2014 English-to-German translation task, the big transformer model (Transformer (big) in Table 2) outperforms the best previously reported models (including ensembles) by more than 2.0 BLEU, establishing a new state-of-the-art BLEU score of 28.4. The configuration of this model is listed in the bottom line of Table 3. Training took 3.5 days on 8 P100 GPUs. Even our base model surpasses all previously published models and ensembles, at a fraction of the training cost of any of the competitive models. On the WMT 2014 English-to-French translation task, our big model achieves a BLEU score of 41.0, outperforming all of the previously published single models, at less than 1/4 the training cost of the previous state-of-the-art model. The Transformer (big) model trained for English-to-French used dropout rate Pdrop = 0.1, instead of 0.3. For the base models, we used a single model obtained by averaging the last 5 checkpoints, which were written at 10-minute intervals. For the big models, we averaged the last 20 checkpoints. We used beam search with a beam size of 4 and length penalty α = 0.6 [38]. These hyperparameters were chosen after experimentation on the development set. We set the maximum output length during inference to input length + 50, but terminate early when possible [38]. Table 2 summarizes our results and compares our translation quality and training costs to other model architectures from the literature. We estimate the number of floating point operations used to train a model by multiplying the training time, the number of GPUs used, and an estimate of the sustained single-precision floating-point capacity of each GPU5. 6.2 Model Variations To evaluate the importance of different components of the Transformer, we varied our base model in different ways, measuring the change in performance on English-to-German translation on the 5We used values of 2.8, 3.7, 6.0 and 9.5 TFLOPS for K80, K40, M40 and P100, respectively. 8
+Table 3: Variations on the Transformer architecture. Unlisted values are identical to those of the base model. All metrics are on the English-to-German translation development set, newstest2013. Listed perplexities are per-wordpiece, according to our byte-pair encoding, and should not be compared to per-word perplexities. N dmodel dff h dk dv Pdrop ϵls train PPL BLEU params steps (dev) (dev) 106 base 6 512 2048 8 64 64 0.1 0.1 100K 4.92 25.8 65 (A) 1 512 512 5.29 24.9 4 128 128 5.00 25.5 16 32 32 4.91 25.8 32 16 16 5.01 25.4 (B) 16 5.16 25.1 58 32 5.01 25.4 60 (C) 2 6.11 23.7 36 4 5.19 25.3 50 8 4.88 25.5 80 256 32 32 5.75 24.5 28 1024 128 128 4.66 26.0 168 1024 5.12 25.4 53 4096 4.75 26.2 90 (D) 0.0 5.77 24.6 0.2 4.95 25.5 0.0 4.67 25.3 0.2 5.47 25.7 (E) positional embedding instead of sinusoids 4.92 25.7 big 6 1024 4096 16 0.3 300K 4.33 26.4 213 development set, newstest2013. We used beam search as described in the previous section, but no checkpoint averaging. We present these results in Table 3. In Table 3 rows (A), we vary the number of attention heads and the attention key and value dimensions, keeping the amount of computation constant, as described in Section 3.2.2. While single-head attention is 0.9 BLEU worse than the best setting, quality also drops off with too many heads. In Table 3 rows (B), we observe that reducing the attention key size dk hurts model quality. This suggests that determining compatibility is not easy and that a more sophisticated compatibility function than dot product may be beneficial. We further observe in rows (C) and (D) that, as expected, bigger models are better, and dropout is very helpful in avoiding over-fitting. In row (E) we replace our sinusoidal positional encoding with learned positional embeddings [9], and observe nearly identical results to the base model. 6.3 English Constituency Parsing To evaluate if the Transformer can generalize to other tasks we performed experiments on English constituency parsing. This task presents specific challenges: the output is subject to strong structural constraints and is significantly longer than the input. Furthermore, RNN sequence-to-sequence models have not been able to attain state-of-the-art results in small-data regimes [37]. We trained a 4-layer transformer with dmodel = 1024 on the Wall Street Journal (WSJ) portion of the Penn Treebank [25], about 40K training sentences. We also trained it in a semi-supervised setting, using the larger high-confidence and BerkleyParser corpora from with approximately 17M sentences [37]. We used a vocabulary of 16K tokens for the WSJ only setting and a vocabulary of 32K tokens for the semi-supervised setting. We performed only a small number of experiments to select the dropout, both attention and residual (section 5.4), learning rates and beam size on the Section 22 development set, all other parameters remained unchanged from the English-to-German base translation model. During inference, we 9
+Table 4: The Transformer generalizes well to English constituency parsing (Results are on Section 23 of WSJ) Parser Training WSJ 23 F1 Vinyals & Kaiser el al. (2014) [37] WSJ only, discriminative 88.3 Petrov et al. (2006) [29] WSJ only, discriminative 90.4 Zhu et al. (2013) [40] WSJ only, discriminative 90.4 Dyer et al. (2016) [8] WSJ only, discriminative 91.7 Transformer (4 layers) WSJ only, discriminative 91.3 Zhu et al. (2013) [40] semi-supervised 91.3 Huang & Harper (2009) [14] semi-supervised 91.3 McClosky et al. (2006) [26] semi-supervised 92.1 Vinyals & Kaiser el al. (2014) [37] semi-supervised 92.1 Transformer (4 layers) semi-supervised 92.7 Luong et al. (2015) [23] multi-task 93.0 Dyer et al. (2016) [8] generative 93.3 increased the maximum output length to input length + 300. We used a beam size of 21 and α = 0.3 for both WSJ only and the semi-supervised setting. Our results in Table 4 show that despite the lack of task-specific tuning our model performs sur- prisingly well, yielding better results than all previously reported models with the exception of the Recurrent Neural Network Grammar [8]. In contrast to RNN sequence-to-sequence models [37], the Transformer outperforms the Berkeley- Parser [29] even when training only on the WSJ training set of 40K sentences. 7 Conclusion In this work, we presented the Transformer, the first sequence transduction model based entirely on attention, replacing the recurrent layers most commonly used in encoder-decoder architectures with multi-headed self-attention. For translation tasks, the Transformer can be trained significantly faster than architectures based on recurrent or convolutional layers. On both WMT 2014 English-to-German and WMT 2014 English-to-French translation tasks, we achieve a new state of the art. In the former task our best model outperforms even all previously reported ensembles. We are excited about the future of attention-based models and plan to apply them to other tasks. We plan to extend the Transformer to problems involving input and output modalities other than text and to investigate local, restricted attention mechanisms to efficiently handle large inputs and outputs such as images, audio and video. Making generation less sequential is another research goals of ours. The code we used to train and evaluate our models is available at https://github.com/ tensorflow/tensor2tensor. Acknowledgements We are grateful to Nal Kalchbrenner and Stephan Gouws for their fruitful comments, corrections and inspiration. References [1] Jimmy Lei Ba, Jamie Ryan Kiros, and Geoffrey E Hinton. Layer normalization. arXiv preprint arXiv:1607.06450, 2016. [2] Dzmitry Bahdanau, Kyunghyun Cho, and Yoshua Bengio. Neural machine translation by jointly learning to align and translate. CoRR, abs/1409.0473, 2014. [3] Denny Britz, Anna Goldie, Minh-Thang Luong, and Quoc V. Le. Massive exploration of neural machine translation architectures. CoRR, abs/1703.03906, 2017. [4] Jianpeng Cheng, Li Dong, and Mirella Lapata. Long short-term memory-networks for machine reading. arXiv preprint arXiv:1601.06733, 2016. 10
+[5] Kyunghyun Cho, Bart van Merrienboer, Caglar Gulcehre, Fethi Bougares, Holger Schwenk, and Yoshua Bengio. Learning phrase representations using rnn encoder-decoder for statistical machine translation. CoRR, abs/1406.1078, 2014. [6] Francois Chollet. Xception: Deep learning with depthwise separable convolutions. arXiv preprint arXiv:1610.02357, 2016. [7] Junyoung Chung, aglar Glehre, Kyunghyun Cho, and Yoshua Bengio. Empirical evaluation of gated recurrent neural networks on sequence modeling. CoRR, abs/1412.3555, 2014. [8] Chris Dyer, Adhiguna Kuncoro, Miguel Ballesteros, and Noah A. Smith. Recurrent neural network grammars. In Proc. of NAACL, 2016. [9] Jonas Gehring, Michael Auli, David Grangier, Denis Yarats, and Yann N. Dauphin. Convolu- tional sequence to sequence learning. arXiv preprint arXiv:1705.03122v2, 2017. [10] Alex Graves. Generating sequences with recurrent neural networks. arXiv preprint arXiv:1308.0850, 2013. [11] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun. Deep residual learning for im- age recognition. In Proceedings of the IEEE Conference on Computer Vision and Pattern Recognition, pages 770–778, 2016. [12] Sepp Hochreiter, Yoshua Bengio, Paolo Frasconi, and Jrgen Schmidhuber. Gradient flow in recurrent nets: the difficulty of learning long-term dependencies, 2001. [13] Sepp Hochreiter and Jrgen Schmidhuber. Long short-term memory. Neural computation, 9(8):1735–1780, 1997. [14] Zhongqiang Huang and Mary Harper. Self-training PCFG grammars with latent annotations across languages. In Proceedings of the 2009 Conference on Empirical Methods in Natural Language Processing, pages 832–841. ACL, August 2009. [15] Rafal Jozefowicz, Oriol Vinyals, Mike Schuster, Noam Shazeer, and Yonghui Wu. Exploring the limits of language modeling. arXiv preprint arXiv:1602.02410, 2016. [16] Łukasz Kaiser and Samy Bengio. Can active memory replace attention? In Advances in Neural Information Processing Systems, (NIPS), 2016. [17] Łukasz Kaiser and Ilya Sutskever. Neural GPUs learn algorithms. In International Conference on Learning Representations (ICLR), 2016. [18] Nal Kalchbrenner, Lasse Espeholt, Karen Simonyan, Aaron van den Oord, Alex Graves, and Ko- ray Kavukcuoglu. Neural machine translation in linear time. arXiv preprint arXiv:1610.10099v2, 2017. [19] Yoon Kim, Carl Denton, Luong Hoang, and Alexander M. Rush. Structured attention networks. In International Conference on Learning Representations, 2017. [20] Diederik Kingma and Jimmy Ba. Adam: A method for stochastic optimization. In ICLR, 2015. [21] Oleksii Kuchaiev and Boris Ginsburg. Factorization tricks for LSTM networks. arXiv preprint arXiv:1703.10722, 2017. [22] Zhouhan Lin, Minwei Feng, Cicero Nogueira dos Santos, Mo Yu, Bing Xiang, Bowen Zhou, and Yoshua Bengio. A structured self-attentive sentence embedding. arXiv preprint arXiv:1703.03130, 2017. [23] Minh-Thang Luong, Quoc V. Le, Ilya Sutskever, Oriol Vinyals, and Lukasz Kaiser. Multi-task sequence to sequence learning. arXiv preprint arXiv:1511.06114, 2015. [24] Minh-Thang Luong, Hieu Pham, and Christopher D Manning. Effective approaches to attention- based neural machine translation. arXiv preprint arXiv:1508.04025, 2015. 11
+[25] Mitchell P Marcus, Mary Ann Marcinkiewicz, and Beatrice Santorini. Building a large annotated corpus of english: The penn treebank. Computational linguistics, 19(2):313–330, 1993. [26] David McClosky, Eugene Charniak, and Mark Johnson. Effective self-training for parsing. In Proceedings of the Human Language Technology Conference of the NAACL, Main Conference, pages 152–159. ACL, June 2006. [27] Ankur Parikh, Oscar Tckstrm, Dipanjan Das, and Jakob Uszkoreit. A decomposable attention model. In Empirical Methods in Natural Language Processing, 2016. [28] Romain Paulus, Caiming Xiong, and Richard Socher. A deep reinforced model for abstractive summarization. arXiv preprint arXiv:1705.04304, 2017. [29] Slav Petrov, Leon Barrett, Romain Thibaux, and Dan Klein. Learning accurate, compact, and interpretable tree annotation. In Proceedings of the 21st International Conference on Computational Linguistics and 44th Annual Meeting of the ACL, pages 433–440. ACL, July 2006. [30] Ofir Press and Lior Wolf. Using the output embedding to improve language models. arXiv preprint arXiv:1608.05859, 2016. [31] Rico Sennrich, Barry Haddow, and Alexandra Birch. Neural machine translation of rare words with subword units. arXiv preprint arXiv:1508.07909, 2015. [32] Noam Shazeer, Azalia Mirhoseini, Krzysztof Maziarz, Andy Davis, Quoc Le, Geoffrey Hinton, and Jeff Dean. Outrageously large neural networks: The sparsely-gated mixture-of-experts layer. arXiv preprint arXiv:1701.06538, 2017. [33] Nitish Srivastava, Geoffrey E Hinton, Alex Krizhevsky, Ilya Sutskever, and Ruslan Salakhutdi- nov. Dropout: a simple way to prevent neural networks from overfitting. Journal of Machine Learning Research, 15(1):1929–1958, 2014. [34] Sainbayar Sukhbaatar, Arthur Szlam, Jason Weston, and Rob Fergus. End-to-end memory networks. In C. Cortes, N. D. Lawrence, D. D. Lee, M. Sugiyama, and R. Garnett, editors, Advances in Neural Information Processing Systems 28, pages 2440–2448. Curran Associates, Inc., 2015. [35] Ilya Sutskever, Oriol Vinyals, and Quoc VV Le. Sequence to sequence learning with neural networks. In Advances in Neural Information Processing Systems, pages 3104–3112, 2014. [36] Christian Szegedy, Vincent Vanhoucke, Sergey Ioffe, Jonathon Shlens, and Zbigniew Wojna. Rethinking the inception architecture for computer vision. CoRR, abs/1512.00567, 2015. [37] Vinyals & Kaiser, Koo, Petrov, Sutskever, and Hinton. Grammar as a foreign language. In Advances in Neural Information Processing Systems, 2015. [38] Yonghui Wu, Mike Schuster, Zhifeng Chen, Quoc V Le, Mohammad Norouzi, Wolfgang Macherey, Maxim Krikun, Yuan Cao, Qin Gao, Klaus Macherey, et al. Google’s neural machine translation system: Bridging the gap between human and machine translation. arXiv preprint arXiv:1609.08144, 2016. [39] Jie Zhou, Ying Cao, Xuguang Wang, Peng Li, and Wei Xu. Deep recurrent models with fast-forward connections for neural machine translation. CoRR, abs/1606.04199, 2016. [40] Muhua Zhu, Yue Zhang, Wenliang Chen, Min Zhang, and Jingbo Zhu. Fast and accurate shift-reduce constituent parsing. In Proceedings of the 51st Annual Meeting of the ACL (Volume 1: Long Papers), pages 434–443. ACL, August 2013. 12
+Attention Visualizations It is in this spirit that a majority of American governments have passed new laws since 2009 making the registration or voting process more difficult . <EOS> <pad> <pad> <pad> <pad> <pad> <pad> It is in this spirit that a majority of American governments have passed new laws since 2009 making the registration or voting process more difficult . <EOS> <pad> <pad> <pad> <pad> <pad> <pad> Figure 3: An example of the attention mechanism following long-distance dependencies in the encoder self-attention in layer 5 of 6. Many of the attention heads attend to a distant dependency of the verb ‘making’, completing the phrase ‘making...more difficult’. Attentions here shown only for the word ‘making’. Different colors represent different heads. Best viewed in color. 13
+The Law will never be perfect , but its application should be just - this is what we are missing , in my opinion . <EOS> <pad> The Law will never be perfect , but its application should be just - this is what we are missing , in my opinion . <EOS> <pad> The Law will never be perfect , but its application should be just - this is what we are missing , in my opinion . <EOS> <pad> The Law will never be perfect , but its application should be just - this is what we are missing , in my opinion . <EOS> <pad> Figure 4: Two attention heads, also in layer 5 of 6, apparently involved in anaphora resolution. Top: Full attentions for head 5. Bottom: Isolated attentions from just the word ‘its’ for attention heads 5 and 6. Note that the attentions are very sharp for this word. 14
+The Law will never be perfect , but its application should be just - this is what we are missing , in my opinion . <EOS> <pad> The Law will never be perfect , but its application should be just - this is what we are missing , in my opinion . <EOS> <pad> The Law will never be perfect , but its application should be just - this is what we are missing , in my opinion . <EOS> <pad> The Law will never be perfect , but its application should be just - this is what we are missing , in my opinion . <EOS> <pad> Figure 5: Many of the attention heads exhibit behaviour that seems related to the structure of the sentence. We give two such examples above, from two different heads from the encoder self-attention at layer 5 of 6. The heads clearly learned to perform different tasks. 15
 
 ## Images
 ### Image 1
-**Description:** small rectangular grayscale image (64x64)
-![Image 1](page_1_img_1_0f58f9aa.png)
-**Dimensions:** 64x64
+**Description:** large rectangular color image (1520x2239)
+![Image 1](page_3_img_1_e7acc8c9.png)
+**Dimensions:** 1520x2239
 
 ### Image 2
-**Description:** small rectangular color image (64x64)
-![Image 2](page_1_img_2_87e4f64c.png)
-**Dimensions:** 64x64
+**Description:** medium rectangular color image (445x884)
+![Image 2](page_4_img_1_a019f0b6.png)
+**Dimensions:** 445x884
 
 ### Image 3
-**Description:** small rectangular color image (64x64)
-![Image 3](page_1_img_3_1be6f0da.png)
-**Dimensions:** 64x64
+**Description:** large rectangular color image (835x1282)
+![Image 3](page_4_img_2_72d15ff8.png)
+**Dimensions:** 835x1282
 
 
 ## Tables
 ### Table 1
-| See discussions, stats, and author profiles for this publication at: https://www.researchgate.net/publication/282001406 Deep neural network based instrument extraction from music Conference Paper · April 2015 DOI: 10.1109/ICASSP.2015.7178348 CITATIONS READS 138 4,160 3 authors: Stefan Uhlich Franck Giron University of Stuttgart Sony Europe B.V., Zwg. Deutschland 67 PUBLICATIONS 1,229 CITATIONS 8 PUBLICATIONS 380 CITATIONS SEE PROFILE SEE PROFILE Yuki Mitsufuji Sony Group Corporation 175 PUBLICATIONS 2,294 CITATIONS SEE PROFILE |  |
-| --- | --- |
-| All content following this page was uploaded by Stefan Uhlich on 22 September 2015. The user has requested enhancement of the downloaded file. |  |
+| train N d d h d d P ϵ model ff k v drop ls steps |
+| --- |
+| 6 512 2048 8 64 64 0.1 0.1 100K |
+| 1 512 512 4 128 128 16 32 32 32 16 16 |
+| 16 32 |
+| 2 4 8 256 32 32 1024 128 128 1024 4096 |
+| 0.0 0.2 0.0 0.2 |
+| positionalembeddinginsteadofsinusoids |
+| 6 1024 4096 16 0.3 300K |
 
 ### Table 2
-| Instrument | Numberoffiles (=bVariations) | Materiallength |
-| --- | --- | --- |
-| Bassoon Cello Clarinet Horn Piano Saxophone Trumpet Viola Violin | 18 6 14 14 89 19 16 13 12 | 1.44hours 1.88hours 1.15hours 0.82hours 6.12hours 1.16hours 0.38hours 1.61hours 5.60hours |
+| Training |
+| --- |
+| WSJonly,discriminative WSJonly,discriminative WSJonly,discriminative WSJonly,discriminative |
+| WSJonly,discriminative |
+| semi-supervised semi-supervised semi-supervised semi-supervised |
+| semi-supervised |
+| multi-task generative |
 
 ### Table 3
-| Instrument Output | After1stlayer SDR SIR SAR | After2ndlayer SDR SIR SAR | After3rdlayer SDR SIR SAR | After4thlayer SDR SIR SAR | After5thlayer SDR SIR SAR | Afterfinetuning SDR SIR SAR |
-| --- | --- | --- | --- | --- | --- | --- |
-| Rawoutput Horn WFoutput smharB Rawoutput Piano WFoutput Rawoutput Violin WFoutput | 3.30 4.79 9.93 4.05 5.63 10.25 | 5.15 8.19 8.73 6.36 10.20 9.08 | 5.29 8.50 8.69 6.51 10.81 8.87 | 5.38 8.66 8.69 6.58 10.99 8.87 | 5.53 9.19 8.47 6.71 11.44 8.79 | 5.70 9.57 8.44 6.80 11.68 8.79 |
-|  | 0.85 1.93 9.58 2.62 4.54 8.41 | 2.34 4.37 7.97 4.13 7.53 7.49 | 3.16 6.60 6.64 4.36 9.07 6.66 | 3.26 6.61 6.82 4.40 9.13 6.67 | 3.34 6.86 6.71 4.47 9.41 6.62 | 3.47 7.34 6.51 4.68 10.13 6.54 |
-|  | −0.23 1.88 6.11 3.62 8.57 5.86 | 3.06 9.52 4.63 5.27 14.10 6.05 | 3.49 9.21 5.33 6.04 15.19 6.74 | 3.50 9.23 5.34 6.08 15.30 6.76 | 3.57 9.44 5.33 6.02 15.36 6.68 | 3.90 10.34 5.41 6.11 15.60 6.75 |
-| Rawoutput Bassoon WFoutput reissuL Rawoutput Piano WFoutput Rawoutput Trumpet WFoutput | 3.05 5.48 7.82 4.38 7.55 7.94 | 3.47 6.51 7.32 4.40 9.38 6.53 | 3.62 7.00 7.07 4.36 9.71 6.30 | 3.68 7.14 7.04 4.42 9.75 6.36 | 3.72 7.31 6.96 4.34 9.75 6.26 | 3.39 7.08 6.60 3.92 9.37 5.85 |
-|  | 1.57 3.30 8.08 3.12 6.07 7.14 | 1.69 4.06 6.90 3.33 6.60 6.95 | 1.87 4.21 7.08 3.23 6.44 6.94 | 1.94 4.31 7.06 3.32 6.64 6.89 | 1.93 4.38 6.92 3.27 6.69 6.75 | 1.97 4.65 6.61 2.99 6.64 6.29 |
-|  | 5.01 9.37 7.47 6.00 10.18 8.49 | 6.28 11.26 8.25 7.14 12.86 8.71 | 6.61 11.67 8.51 7.38 13.55 8.77 | 6.56 11.54 8.52 7.23 13.43 8.62 | 6.55 11.57 8.49 7.22 13.49 8.58 | 6.38 11.49 8.27 7.23 13.54 8.57 |
+|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  | st |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+|  |  |  |  |  |  |  |  |  |  |  |  |  |  | n |  | ne |  |  |  |  |  |  |  |  | no |  |  |  |  |  |  |  |  |  |  |  |  |  |
+|  |  |  |  |  |  |  |  |  |  |  | yt |  |  | ac |  | m |  | d |  |  |  |  | g |  | ita |  |  | s |  | t |  | > |  |  |  |  |  |  |
+|  |  |  |  |  |  | t |  |  |  |  | iro |  |  | ir |  | nre | e | es |  |  | e | 9 | ni |  | rts |  | gn | se | e | lu |  | S | >d | >d | >d | >d | >d | >d |
+|  |  |  |  |  | si | iri |  | ta |  |  | ja |  |  | em |  | vo | va | sa | we | sw | cn | 00 | ka | e | ig |  | it | co | ro | ciff |  | OE | ap | ap | ap | ap | ap | ap |
+| tI |  | si |  | ni | ht | ps |  | ht |  | a | m | fo |  | A |  | g | h | p | n | al | is | 2 | m | ht | er | ro | ov | rp | m | id | . | < | < | < | < | < | < | < |
 
 ### Table 4
-| Instrument | MFCCkmeans[17] SDR SIR SAR | MelNMF[17] SDR SIR SAR | Shifted-NMF[18] SDR SIR SAR | DNNwithWF SDR SIR SAR |
-| --- | --- | --- | --- | --- |
-| Horn smharB Piano Violin Average | 3.87 5.76 9.41 3.30 4.42 10.76 −8.35 −7.89 10.21 | 4.17 5.83 10.17 −0.10 0.21 14.39 9.69 19.79 10.19 | 2.95 3.34 15.20 3.78 5.59 9.50 7.66 10.96 10.74 | 6.80 11.68 8.79 4.68 10.13 6.54 6.11 15.60 6.75 |
-|  | −0.39 0.76 10.13 | 4.59 8.61 11.58 | 4.80 6.63 11.81 | 5.86 12.47 7.36 |
-| Bassoon reissuL Piano Trumpet Average | 1.85 11.67 2.61 4.66 6.28 10.64 −1.73 −1.29 12.18 | 0.15 0.75 11.72 4.56 8.00 7.83 8.46 18.12 9.05 | −0.83 −0.60 15.43 2.54 5.14 7.16 6.57 7.39 14.95 | 3.92 9.37 5.85 2.99 6.64 6.29 7.23 13.54 8.57 |
-|  | 1.59 5.55 8.48 | 4.39 8.96 9.53 | 2.76 3.98 12.51 | 4.71 9.85 6.90 |
+| tI | si | ni | si | tir | ta | a | yt | fo | n | st | e | d | w | s | e | 9 | g | e | n | ro | g | ss | er | tlu | . | > | > | > | > | > | > | > |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+|  |  |  | ht | ip | ht |  | iro |  | aci | ne | va | es | en | wa | cni | 00 | nik | ht | oit |  | nit | e | o | ci |  | SO | da | da | da | da | da | da |
+|  |  |  |  | s |  |  | ja |  | re | m | h | sa |  | l | s | 2 | a |  | art |  | ov | cor | m | ffi |  | E | p< | p< | p< | p< | p< | p< |
+|  |  |  |  |  |  |  | m |  | m | nr |  | p |  |  |  |  | m |  | sig |  |  | p |  | d |  | < |  |  |  |  |  |  |
+|  |  |  |  |  |  |  |  |  | A | ev |  |  |  |  |  |  |  |  | er |  |  |  |  |  |  |  |  |  |  |  |  |  |
+|  |  |  |  |  |  |  |  |  |  | og |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
 
 ### Table 5
-|  |  |  |  |  | dedda r |  |  | dedda r |  |  | dedda r |  |  | gninut e |  | Piano Horn Violin |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-|  |  |  |  | dr | eyal |  | ht | eyal |  | ht | eyal |  |  | nif trat |  |  |
-|  |  |  |  |  | 3 |  |  | 4 |  |  | 5 |  |  | S |  |  |
-|  |  | d |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  |  | edda |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
-|  | d | reyal |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
+| ehT |  | waL |  | lliw |  | reven |  | eb |  | tcefrep |  | , |  | tub |  | sti |  | noitacilppa | dluohs |  | eb |  | tsuj |  | - |  | siht |  | si |  | tahw |  | ew |  | era |  | gnissim |  |  | , |  |  | ni |  |  | ym |  |  | noinipo |  |  | . |  |  | >SOE< |  | >dap< |  |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| ehT p |  | waL u |  | lliw t- |  | reven In |  | eb p |  | tcefrep u |  | , t |  | tub La |  | sti y |  | noitacil e | dluohs r5 |  | eb |  | tsuj |  | - |  | siht |  | si |  | tahw |  | ew |  | era |  | gnissim |  |  | , |  |  | ni |  |  | ym |  |  | noinipo |  |  | . |  |  | >SOE< |  | >dap< |  |
+|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  | ppa |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
+|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  | no |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
+| ehT |  | waL |  | lliw |  | reven |  | eb |  | tcefrep |  | , |  | tub |  | sti |  | itacilppa | dluohs |  | eb |  | tsuj |  | - |  | siht |  | si |  | tahw |  | ew |  | era |  |  | gnissim |  |  | , |  |  | ni |  |  | ym |  |  | noinipo |  |  | . |  |  | >SOE< |  | >dap< |
+
+### Table 6
+| ehT | waL | lliw | reven | eb | tcefrep | , | tub | sti | noitacilp | dluohs | eb | tsuj | - | siht | si | tahw | ew | era | gnissim | , | ni | ym | noinipo | . | >SOE< | >dap< |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+|  |  |  |  |  |  |  |  |  | pa |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
+| ure latt 6. | 4: ent Not | Two ions eth | att for att | enti he hea | on ad5 tten | hea . B tio | ds,a otto nsa | lso m: rev | in Iso ery | laye late sha | r5 dat rp | of6 ten for | ,ap tion this | par sfr wo | ent om rd. | lyi jus | nvol tth | ved ewo | in rd‘ | ana its’ | pho for | rar att | esol enti | utio on | n. hea | Top ds5 |
+
+### Table 7
+| ehT p |  | waL u |  | lliw t- |  | reven In |  | eb p |  | tcefrep u |  | , t |  | tub La |  | sti y |  | noitacil e |  | dluohs r5 |  | eb |  | tsuj |  | - |  | siht |  | si |  | tahw |  | ew |  | era |  | gnissim |  | , |  | ni |  | ym |  | noinipo |  | . |  | >SOE< |  | >dap< |  |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+|  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  | ppa |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |
+| ehT |  | waL |  | lliw |  | reven |  | eb |  | tcefrep |  | , |  | tub |  | sti |  | noitacilppa |  | dluohs |  | eb |  | tsuj |  | - |  | siht |  | si |  | tahw |  | ew |  | era |  | gnissim |  | , |  | ni |  | ym |  | noinipo |  | . |  | >SOE< |  | >dap< |  |
 
 
 ## Mathematical Formulas
 ### Formula 1
-```latex
-i=1 vi(n)
-```
+$z = (z1$
 
 ### Formula 2
-```latex
-\frac{8}{15}
-```
+$$
+to a sequence of continuous representations z = (z1
+$$
 
 ### Formula 3
-```latex
-= s(n) + M X i
-```
+$N = 6 identical layers$
 
 ### Formula 4
-```latex
-=1 vi(n)
-```
+$l = 512$
 
 ### Formula 5
-```latex
-2135 978-1-4673-6997-\frac{8}{15}/$31.00 2015 IEEE ICASSP 2015
-```
+$$
+The encoder is composed of a stack of N = 6 identical layers
+$$
 
 ### Formula 6
-```latex
-k = 1
-```
+$produce outputs of dimension dmodel = 512$
 
 ### Formula 7
-```latex
-k=1
-```
+$$
+The decoder is also composed of a stack of N = 6 identical layers
+$$
 
 ### Formula 8
-```latex
-p=1
-```
+$k =Pdk i$
 
 ### Formula 9
-```latex
-b= Variations) Bassoon 18 1
-```
+$= softmax(QKT$
 
 ### Formula 10
-```latex
-i = 1
-```
+$q  k =Pdk i$
 
 ### Formula 11
-```latex
-i=1
-```
+$=1qiki$
 
 ### Formula 12
-```latex
-> 0 in order to make it independent of different amplitude levels of the mixture x(n) where
-```
+$i = Attention(QWQ i$
 
 ### Formula 13
-```latex
-1 = max (Wkxk + bk
-```
+$h = 8 parallel attention layers$
 
 ### Formula 14
-```latex
-i o with i = 1
-```
+$k = dv$
 
 ### Formula 15
-```latex
-= 1
-```
+$h = 64$
 
 ### Formula 16
-```latex
-M X i=1
-```
+$l = 512$
 
 ### Formula 17
-```latex
-Mixture x(n) ..
-```
+$f = 2048$
 
 ### Formula 18
-```latex
-,˜s(P )o and n ˜v(1) i ,
-```
+$\sqrtdmodel. 5$
 
 ### Formula 19
-```latex
-, ˜v(P ) i o with i = 1,
-```
+$= Concat(head1$
 
 ### Formula 20
-```latex
-, M where ˜s(p)\inC(2C+1)Land ˜v(p) i \inC(2C+1)L, i.e., they also contain the 2C neighboring frames
-```
+$WO where headi = Attention(QWQ i$
 
 ### Formula 21
-```latex
-These are now combined to form the DNN input/targets, i.e., x(p)= 1 \gamma(p) \alpha(p)˜s(p) + M X i=1 \alpha(p) i ˜v(p) i , (3a) 2136
-```
+$$
+In this work we employ h = 8 parallel attention layers
+$$
 
 ### Formula 22
-```latex
-i=1
-```
+$For each of these we use dk = dv$
 
 ### Formula 23
-```latex
-S = 0    0 I 0    0
-```
+$= dmodel/h$
 
 ### Formula 24
-```latex
-p=1 s(p)
-```
+$= 64$
 
 ### Formula 25
-```latex
-k = 1 or the output of the (k
-```
+$= max(0$
 
 ### Formula 26
-```latex
-p=1
-```
+$$
+The dimensionality of input and output is dmodel = 512
+$$
 
 ### Formula 27
-```latex
-k = CsxC
-```
+$layer has dimensionality dff = 2048$
 
 ### Formula 28
-```latex
-k= s
-```
+$= sin(pos/100002i/dmodel) PE(pos$
 
 ### Formula 29
-```latex
-x = P X p
-```
+$$
+= cos(pos/100002i/dmodel) where pos is the position and i is the dimension
+$$
 
 ### Formula 30
-```latex
-s =1 P PP p
-```
+$k = n$
 
 ### Formula 31
-```latex
-k = 1 P PP p
-```
+$e = d$
 
 ### Formula 32
-```latex
-L = 513 magnitude values and we augment the input vector by C
-```
+$s = 4000$
 
 ### Formula 33
-```latex
-L = 3591 elements and corresponds to 224 milliseconds of the mixture signal
-```
+$p_{num}$
 
 ### Formula 34
-```latex
-P = 106samples and the gen- erated training material has thus a length of 62
-```
+$p_{steps}$
 
 ### Formula 35
-```latex
-> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in
-```
+$Even with k = n$
 
 ### Formula 36
-```latex
-PM i=1
-```
+$1 = 0$
 
 ### Formula 37
-```latex
-= arg min Wk
-```
+$2 = 0$
 
 ### Formula 38
-```latex
-bk P X p=1 s(p)
-```
+$= 10$
 
 ### Formula 39
-```latex
-k denotes either the pth DNN input for k = 1 or the output of the (k
-```
+$lrate = d$
 
 ### Formula 40
-```latex
-form and the solution is given by Winit k = CsxC
-```
+$steps = 4000$
 
 ### Formula 41
-```latex
-binit k= s
-```
+$p = 0$
 
 ### Formula 42
-```latex
-with Csx = P X p
-```
+$s = 0$
 
 ### Formula 43
-```latex
-=1  s(p)
-```
+$\frac{1}{4}$
 
 ### Formula 44
-```latex
-Cxx = P X p
-```
+$$
+l = 1024 on the Wall Street Journal (WSJ) portion of the Penn Treebank
+$$
 
 ### Formula 45
-```latex
-=1  x(p) k
-```
+$$
+layer transformer with dmodel = 1024 on the Wall Street Journal (WSJ) portion of the Penn Treebank
+$$
 
 ### Formula 46
-```latex
-and s =1 P PP p
-```
+$$
+(2013) [40] semi-supervised 91.3 Huang & Harper (2009) [14] semi-supervised 91.3 McClosky et al
+$$
 
 ### Formula 47
-```latex
-=1s(p)
-```
+$(2015) [23] multi-task 93.0 Dyer et al$
 
 ### Formula 48
-```latex
-xk = 1 P PP p
-```
+$[10] Alex Graves$
 
 ### Formula 49
-```latex
-=1x(p) k
-```
-
-### Formula 50
-```latex
-we have L = 513 magnitude values and we augment the input vector by C
-```
-
-### Formula 51
-```latex
-= 3 pre- ceding/succeeding frames in order to provide temporal context to the DNN
-```
-
-### Formula 52
-```latex
-we use P = 106samples and the gen- erated training material has thus a length of 62
-```
-
-### Formula 53
-```latex
-3000 = 6000 L-BFGS iterations
-```
-
-### Formula 54
-```latex
-s(p)=\alpha(p) \gamma(p) S ˜s(p) , (3b) where \gamma(p)> 0 is the average Euclidean norm of the 2C +1 magni- tude frames in \alpha(p)˜s(p) + PM i=1\alpha(p) i ˜v(p) i and S \inRL(2C+1)L is a selection matrix which is used to select the center frame of ˜s(p), i.e., S = 0    0 I 0    0
-```
-
-### Formula 55
-```latex
-The scalars \alpha(p), \alpha(p) 1,
-```
-
-### Formula 56
-```latex
-The least squares problem (4) can be solved in closed-form and the solution is given by Winit k = CsxC−1 xx, binit k= s −Winit kxk, (5) with Csx = P X p=1  s(p)−s   x(p) k −xk T , Cxx = P X p=1  x(p) k −xk   x(p) k −xk T , and s =1 P PP p=1s(p), xk = 1 P PP p=1x(p) k
-```
-
-### Formula 57
-```latex
-., {Wk, bk}
-```
-
-### Formula 58
-```latex
-J = (PP p
-```
-
-### Formula 59
-```latex
-p=1
-```
-
-### Formula 60
-```latex
-J = 0
-```
-
-### Formula 61
-```latex
-2 the evolution of the normalized DNN training error J = (PP p
-```
-
-### Formula 62
-```latex
-=1
-```
-
-### Formula 63
-```latex
-PP p=1
-```
-
-### Formula 64
-```latex
-we have an initial error of J = 0
-```
-
-### Formula 65
-```latex
-we start from a four times smaller error compared to the baseline initialization Winit 1 = S and binit 1
-```
-
-### Formula 66
-```latex
-= 0
-```
-
-### Formula 67
-```latex
-2 the evolution of the normalized DNN training error J = (PP p=1∥s(p) −ˆs(p)∥2)/(PP p=1∥s(p) −Sx(p)∥2) where S is the selection matrix from Sec
-```
-
-### Formula 68
-```latex
-REFERENCES [1] P
-```
-
-### Formula 69
-```latex
-[2] G
-```
-
-### Formula 70
-```latex
-[3] Z
-```
-
-### Formula 71
-```latex
-[4] J.-L
-```
-
-### Formula 72
-```latex
-[5] D
-```
-
-### Formula 73
-```latex
-[6] D
-```
-
-### Formula 74
-```latex
-[7] A
-```
-
-### Formula 75
-```latex
-[8] C
-```
-
-### Formula 76
-```latex
-[9] G
-```
-
-### Formula 77
-```latex
-[10] E
-```
-
-### Formula 78
-```latex
-[11] P.-S
-```
-
-### Formula 79
-```latex
-[12] P.-S
-```
-
-### Formula 80
-```latex
-[13] X
-```
-
-### Formula 81
-```latex
-[14] M
-```
-
-### Formula 82
-```latex
-[15] B
-```
-
-### Formula 83
-```latex
-[16] P
-```
-
-### Formula 84
-```latex
-[17] M
-```
-
-### Formula 85
-```latex
-[18] R
-```
-
-### Formula 86
-```latex
-[19] P
-```
-
-### Formula 87
-```latex
-[20] P
-```
-
-### Formula 88
-```latex
-[21] M
-```
-
-### Formula 89
-```latex
-[22] J
-```
-
-### Formula 90
-```latex
-[23] E
-```
-
-### Formula 91
-```latex
-[24] P
-```
-
-### Formula 92
-```latex
-[25] F
-```
-
-### Formula 93
-```latex
-[26] B
-```
-
-### Formula 94
-```latex
-[27] B
-```
-
-### Formula 95
-```latex
-[28] E
-```
-
-### Formula 96
-```latex
-[29] M
-```
+$[23] Minh-Thang Luong, Quoc V$
 
 
 ## Forms and Fields
@@ -564,4 +279,22 @@ REFERENCES [1] P
 ### Form 4
 
 ### Form 5
+
+### Form 6
+
+### Form 7
+
+### Form 8
+
+### Form 9
+
+### Form 10
+
+### Form 11
+
+### Form 12
+
+### Form 13
+
+### Form 14
 
