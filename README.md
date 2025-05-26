@@ -1,6 +1,6 @@
 # PDF to Markdown Parser System
 
-## 🎯 Características
+## Características
 
 - **Extracción de texto estructurado**: Mantiene jerarquías, títulos, párrafos, listas
 - **Extracción de imágenes**: Detecta y guarda imágenes con referencias en Markdown * con bugs pero en proceso 
@@ -10,13 +10,13 @@
 - **Procesamiento por páginas**: Iteración progresiva con validaciones intermedias
 - **Arquitectura multiagente**: Sistema modular y extensible
 
-## 🚀 Instalación
+## Instalación
 
 ```bash
 pip install -r requirements.txt
 ```
 
-## 🔧 Configuración
+## Configuración
 
 Crea un archivo `.env` con tu API key de OpenAI:
 
@@ -24,7 +24,7 @@ Crea un archivo `.env` con tu API key de OpenAI:
 OPENAI_API_KEY=tu_api_key_aqui
 ```
 
-## 📖 Uso
+## Uso
 
 ### Procesamiento básico
 
@@ -44,7 +44,7 @@ batch = BatchProcessor()
 batch.process_directory("pdfs/", "outputs/")
 ```
 
-## 🏗️ Arquitectura
+## Arquitectura
 
 El sistema utiliza los siguientes agentes especializados:
 
@@ -56,7 +56,7 @@ El sistema utiliza los siguientes agentes especializados:
 - **StructureBuilder**: Ensambla el Markdown final
 - **QualityValidator**: Verifica la calidad de la conversión
 
-## 📁 Estructura del proyecto
+## Estructura del proyecto
 
 ```
 pparser/
@@ -67,7 +67,7 @@ pparser/
 └── processors/      # Procesadores principales
 ```
 
-## 🔄 Flujo de procesamiento
+## Flujo de procesamiento
 
 1. **Análisis inicial**: Determina estructura del PDF
 2. **Extracción paralela**: Cada agente procesa su especialidad
@@ -75,7 +75,7 @@ pparser/
 4. **Validación**: Verifica calidad y completitud
 5. **Generación**: Crea Markdown final y assets
 
-## 📝 Formato de salida
+## Formato de salida
 
 ```
 output/
