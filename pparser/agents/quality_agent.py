@@ -18,8 +18,13 @@ from .base import BaseAgent
 from ..config import Config
 from ..utils.logger import get_logger
 
+from dotenv import load_dotenv
+import os
+
 logger = get_logger(__name__)
 
+load_dotenv()
+TEMPERATURE = float(os.getenv('OPENAI_TEMPERATURE', 0.1))
 
 class QualityValidatorAgent(BaseAgent):
     """

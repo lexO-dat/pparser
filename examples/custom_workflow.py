@@ -33,15 +33,15 @@ async def custom_workflow_example():
     pdf_path = "sample.pdf"
     output_dir = "workflow_output"
     
-    print(f"🔄 Custom Workflow Example")
-    print(f"📁 Input: {pdf_path}")
-    print(f"📁 Output: {output_dir}")
+    print(f"Custom Workflow Example")
+    print(f"Input: {pdf_path}")
+    print(f"Output: {output_dir}")
     print()
     
     try:
         # Check if PDF exists
         if not Path(pdf_path).exists():
-            print(f"❌ PDF file not found: {pdf_path}")
+            print(f"PDF file not found: {pdf_path}")
             print("Please place a PDF file named 'sample.pdf' in the current directory")
             return False
         
@@ -59,27 +59,27 @@ async def custom_workflow_example():
             "current_stage": "initialization"
         }
         
-        print(f"🚀 Starting custom workflow...")
+        print(f"Starting custom workflow...")
         
         # Execute workflow
         final_state = await workflow.workflow.ainvoke(initial_state)
         
         # Check results
         if final_state.get("success", False):
-            print(f"✅ Workflow completed successfully!")
-            print(f"📄 Markdown generated: {bool(final_state.get('markdown_content'))}")
-            print(f"🏗️  Assets created: {len(final_state.get('assets', []))}")
-            print(f"📊 Quality score: {final_state.get('quality_score', 'N/A')}")
+            print(f"Workflow completed successfully!")
+            print(f"Markdown generated: {bool(final_state.get('markdown_content'))}")
+            print(f"Assets created: {len(final_state.get('assets', []))}")
+            print(f"Quality score: {final_state.get('quality_score', 'N/A')}")
             
             # Show processing stages
             if final_state.get("processing_stages"):
-                print(f"\n🔄 Processing stages completed:")
+                print(f"\nProcessing stages completed:")
                 for stage in final_state["processing_stages"]:
-                    print(f"   ✅ {stage}")
+                    print(f"   {stage}")
             
             return True
         else:
-            print(f"❌ Workflow failed")
+            print(f"Workflow failed")
             errors = final_state.get("processing_errors", [])
             if errors:
                 print(f"Errors:")
@@ -88,14 +88,14 @@ async def custom_workflow_example():
             return False
             
     except Exception as e:
-        print(f"❌ Error during workflow execution: {e}")
+        print(f"Error during workflow execution: {e}")
         return False
 
 
 async def workflow_visualization():
     """Display workflow structure."""
     
-    print(f"📊 Workflow Visualization")
+    print(f"Workflow Visualization")
     print("-" * 30)
     
     try:
@@ -117,13 +117,13 @@ async def workflow_visualization():
         return True
         
     except Exception as e:
-        print(f"❌ Error generating visualization: {e}")
+        print(f"Error generating visualization: {e}")
         return False
 
 
 def main():
     """Main function."""
-    print("🤖 PPARSER - Custom Workflow Example")
+    print("PPARSER - Custom Workflow Example")
     print("=" * 50)
     
     try:
@@ -137,16 +137,16 @@ def main():
         result = asyncio.run(custom_workflow_example())
         
         if result:
-            print("\n✨ Example completed successfully!")
+            print("\nExample completed successfully!")
         else:
-            print("\n❌ Example failed")
+            print("\nExample failed")
             return 1
             
     except KeyboardInterrupt:
-        print("\n\n⏹️  Processing interrupted by user")
+        print("\n\nProcessing interrupted by user")
         return 130
     except Exception as e:
-        print(f"\n💥 Fatal error: {e}")
+        print(f"\nFatal error: {e}")
         return 1
     
     return 0

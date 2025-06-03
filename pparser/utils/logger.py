@@ -55,7 +55,13 @@ logger = setup_logger()
 
 def get_logger(name: str = "pparser") -> logging.Logger:
     """Get a logger instance with the specified name"""
-    return setup_logger(name)
+    logger = logging.getLogger(name)
+    
+    # Only setup if not already configured
+    if not logger.handlers:
+        return setup_logger(name)
+    
+    return logger
 
 
 def setup_logging(level: str = "INFO", log_file: Optional[str] = None) -> None:

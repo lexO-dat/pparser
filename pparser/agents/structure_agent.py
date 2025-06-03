@@ -7,6 +7,7 @@ content to create a coherent, well-structured Markdown document.
 
 from typing import Dict, Any, List, Optional
 import json
+import re
 from pathlib import Path
 
 from langchain_openai import ChatOpenAI
@@ -117,68 +118,22 @@ class StructureBuilderAgent(BaseAgent):
         formulas: List[Dict], 
         forms: List[Dict]
     ) -> Dict[str, Any]:
-        """Build a logical document outline from all content."""
-        
-        prompt = ChatPromptTemplate.from_messages([
-            SystemMessage(content="""You are a document structure expert. Create a logical document outline that organizes all content elements into a coherent structure.
-
-                                    Your task:
-                                    1. Analyze the text structure and content elements
-                                    2. Create a hierarchical outline with sections and subsections
-                                    3. Determine where images, tables, formulas, and forms should be placed
-                                    4. Ensure logical flow and readability
-
-                                    Return a JSON structure with:
-                                    - title: Document title
-                                    - sections: Array of section objects with title, content_items, and subsections
-                                    - content_placement: Where each asset should be placed
-
-                                    Be comprehensive but maintain readability."""),
-            
-            HumanMessage(content=f"""
-                                Create a document outline from this content:
-
-                                TEXT STRUCTURE:
-                                {json.dumps(text_content.get('structure', {}), indent=2)}
-
-                                AVAILABLE ASSETS:
-                                - Images: {len(images)} items
-                                - Tables: {len(tables)} items  
-                                - Formulas: {len(formulas)} items
-                                - Forms: {len(forms)} items
-
-                                IMAGE SUMMARIES:
-                                {json.dumps([{'id': i.get('id', f'img_{idx}'), 'description': i.get('description', '')[:100]} for idx, i in enumerate(images)], indent=2)}
-
-                                TABLE SUMMARIES:
-                                {json.dumps([{'id': t.get('id', f'table_{idx}'), 'description': t.get('description', '')[:100]} for idx, t in enumerate(tables)], indent=2)}
-
-                                FORMULA SUMMARIES:
-                                {json.dumps([{'id': f.get('id', f'formula_{idx}'), 'type': f.get('type', '')} for idx, f in enumerate(formulas)], indent=2)}
-
-                                FORM SUMMARIES:
-                                {json.dumps([{'id': form.get('id', f'form_{idx}'), 'type': form.get('type', '')} for idx, form in enumerate(forms)], indent=2)}
-
-                                Create a logical document outline in JSON format.
-                            """)])
+        """Build a logical document outline from all content using chunked processing to avoid token limits."""
         
         try:
-            response = await self.llm.ainvoke(prompt.format_messages())
+            # First, create a basic structure outline with limited content
+            basic_outline = await self._create_basic_outline(text_content)
             
-            # Parse the JSON response
-            outline_text = response.content.strip()
-            if outline_text.startswith('```json'):
-                outline_text = outline_text[7:-3]
-            elif outline_text.startswith('```'):
-                outline_text = outline_text[3:-3]
+            # Then progressively add assets in manageable chunks
+            outline_with_assets = await self._add_assets_to_outline(
+                basic_outline, images, tables, formulas, forms
+            )
             
-            outline = json.loads(outline_text)
+            # Validate and sanitize the final outline
+            final_outline = self._sanitize_outline(outline_with_assets)
             
-            # Validate and sanitize the outline
-            outline = self._sanitize_outline(outline)
-            
-            self.logger.info("Document outline created successfully")
-            return outline
+            self.logger.info("Document outline created successfully with chunked processing")
+            return final_outline
             
         except Exception as e:
             self.logger.error(f"Error building outline: {str(e)}")
@@ -194,6 +149,200 @@ class StructureBuilderAgent(BaseAgent):
                 ],
                 'content_placement': {}
             }
+
+    async def _create_basic_outline(self, text_content: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a basic document outline from text structure only."""
+        
+        # Limit text structure to prevent token overflow
+        structure = text_content.get('structure', {})
+        limited_structure = self._limit_structure_size(structure)
+        
+        # Build prompt content
+        structure_json = json.dumps(limited_structure, indent=2)
+        
+        prompt_content = f"""
+                                Create a basic document outline from this text structure:
+
+                                TEXT STRUCTURE:
+                                {structure_json}
+
+                                Create a logical document outline in JSON format.
+                            """
+        
+        # Check token limit before sending
+        if not self._check_token_limit(prompt_content, max_tokens=90000):
+            self.logger.warning("Text structure still too large, using minimal outline")
+            # Use an even more aggressive limit
+            limited_structure = self._limit_structure_size(structure, max_items=20)
+            structure_json = json.dumps(limited_structure, indent=2)
+            prompt_content = f"""
+                                Create a basic document outline from this text structure:
+
+                                TEXT STRUCTURE:
+                                {structure_json}
+
+                                Create a logical document outline in JSON format.
+                            """
+        
+        prompt = ChatPromptTemplate.from_messages([
+            SystemMessage(content="""You are a document structure expert. Create a basic document outline from the text structure.
+
+                                    Your task:
+                                    1. Analyze the text structure and create logical sections
+                                    2. Create a hierarchical outline with sections and subsections
+                                    3. Focus on text organization and flow
+
+                                    Return a JSON structure with:
+                                    - title: Document title (extract from content)
+                                    - sections: Array of section objects with title and subsections
+                                    - content_placement: Empty object (will be populated later)
+
+                                    Keep the outline concise but comprehensive."""),
+            
+            HumanMessage(content=prompt_content)
+        ])
+        
+        response = await self.llm.ainvoke(prompt.format_messages())
+        
+        # Parse the JSON response
+        outline_text = response.content.strip()
+        if outline_text.startswith('```json'):
+            outline_text = outline_text[7:-3]
+        elif outline_text.startswith('```'):
+            outline_text = outline_text[3:-3]
+        
+        return json.loads(outline_text)
+
+    async def _add_assets_to_outline(
+        self, 
+        outline: Dict[str, Any], 
+        images: List[Dict], 
+        tables: List[Dict], 
+        formulas: List[Dict], 
+        forms: List[Dict]
+    ) -> Dict[str, Any]:
+        """Add assets to the outline in manageable chunks."""
+        
+        # Process assets in smaller batches to avoid token limits
+        all_assets = []
+        
+        # Limit asset descriptions to prevent token overflow
+        for idx, img in enumerate(images[:20]):  # Limit to 20 images
+            all_assets.append({
+                'type': 'image',
+                'id': img.get('id', f'img_{idx}'),
+                'description': img.get('description', '')[:50]  # Truncate descriptions
+            })
+        
+        for idx, table in enumerate(tables[:15]):  # Limit to 15 tables
+            all_assets.append({
+                'type': 'table',
+                'id': table.get('id', f'table_{idx}'),
+                'description': table.get('description', '')[:50]
+            })
+        
+        for idx, formula in enumerate(formulas[:25]):  # Limit to 25 formulas
+            all_assets.append({
+                'type': 'formula',
+                'id': formula.get('id', f'formula_{idx}'),
+                'formula_type': formula.get('type', '')
+            })
+        
+        for idx, form in enumerate(forms[:10]):  # Limit to 10 forms
+            all_assets.append({
+                'type': 'form',
+                'id': form.get('id', f'form_{idx}'),
+                'form_type': form.get('type', '')
+            })
+        
+        # Process assets in chunks of 10
+        chunk_size = 10
+        final_outline = outline.copy()
+        
+        for i in range(0, len(all_assets), chunk_size):
+            chunk = all_assets[i:i + chunk_size]
+            final_outline = await self._integrate_asset_chunk(final_outline, chunk)
+        
+        return final_outline
+
+    async def _integrate_asset_chunk(self, outline: Dict[str, Any], assets: List[Dict]) -> Dict[str, Any]:
+        """Integrate a chunk of assets into the existing outline."""
+        
+        prompt = ChatPromptTemplate.from_messages([
+            SystemMessage(content="""You are integrating content assets into a document outline. 
+                                    Your task is to place assets (images, tables, formulas, forms) INLINE within the appropriate content sections where they naturally belong, rather than creating separate sections for them.
+                                    
+                                    Rules:
+                                    1. Images should be placed inline within the text where they are referenced or contextually relevant
+                                    2. Tables should be embedded within sections where their data is discussed  
+                                    3. Formulas should be placed inline within the mathematical content where they appear
+                                    4. Forms should be integrated where survey/questionnaire content is mentioned
+                                    5. Do NOT create separate "Images", "Tables", "Formulas", or "Forms" sections
+                                    6. Instead, add assets to existing content sections using the content_placement field
+                                    7. Use section titles like "Content", "Background", "Model Architecture", etc. to place assets contextually
+                                    
+                                    Update the content_placement object to specify inline placement within existing sections.
+                                    The goal is to recreate the original document structure where assets appear integrated with text."""),
+            
+            HumanMessage(content=f"""
+                                Current outline:
+                                {json.dumps(outline, indent=2)}
+
+                                Assets to integrate INLINE (not in separate sections):
+                                {json.dumps(assets, indent=2)}
+
+                                Return the updated outline with inline placement information for these assets within appropriate existing sections.
+                                Focus on contextual placement within "Content", "Background", "Model Architecture" and similar content sections.
+                            """)
+        ])
+        
+        try:
+            response = await self.llm.ainvoke(prompt.format_messages())
+            
+            # Parse the JSON response
+            outline_text = response.content.strip()
+            if outline_text.startswith('```json'):
+                outline_text = outline_text[7:-3]
+            elif outline_text.startswith('```'):
+                outline_text = outline_text[3:-3]
+            
+            updated_outline = json.loads(outline_text)
+            return updated_outline
+            
+        except Exception as e:
+            self.logger.warning(f"Error integrating asset chunk: {str(e)}")
+            # Return original outline if integration fails
+            return outline
+
+    def _limit_structure_size(self, structure: Dict[str, Any], max_items: int = 100) -> Dict[str, Any]:
+        """Limit the size of text structure to prevent token overflow."""
+        if not isinstance(structure, dict):
+            return structure
+        
+        limited = {}
+        item_count = 0
+        
+        for key, value in structure.items():
+            if item_count >= max_items:
+                break
+                
+            if isinstance(value, list):
+                # Limit list items
+                limited[key] = value[:10]  # Keep first 10 items
+                item_count += min(len(value), 10)
+            elif isinstance(value, dict):
+                # Recursively limit nested dictionaries
+                limited[key] = self._limit_structure_size(value, max_items - item_count)
+                item_count += len(limited[key])
+            elif isinstance(value, str):
+                # Truncate long strings
+                limited[key] = value[:200] if len(value) > 200 else value
+                item_count += 1
+            else:
+                limited[key] = value
+                item_count += 1
+        
+        return limited
 
     async def _assemble_sections(self, outline: Dict[str, Any], content_data: Dict[str, Any]) -> List[Dict[str, Any]]:
         """Assemble content into structured sections based on the outline."""
@@ -319,7 +468,7 @@ class StructureBuilderAgent(BaseAgent):
                                         3. Add appropriate spacing and line breaks
                                         4. Format special elements correctly:
                                            - Code blocks with language specification
-                                           - Math equations with LaTeX
+                                           - Math equations with $ and $$ delimiters (NOT \( and \) )
                                            - Tables with proper alignment
                                            - Lists (ordered, unordered, definition)
                                            - Index entries with proper indentation
@@ -328,6 +477,10 @@ class StructureBuilderAgent(BaseAgent):
                                         6. Maintain readability and professional appearance
                                         7. Preserve original document structure
                                         8. Handle special formatting requirements
+                                        9. Place images, tables, and formulas inline where they belong in content flow, NOT in separate sections
+                                        10. Use ONLY Markdown math delimiters: $ for inline math and $$ for block math
+
+                                        CRITICAL: Mathematical formulas must use $ and $$ delimiters, never \( and \)
 
                                         Output only the final Markdown content, no explanations."""),
                     
@@ -339,6 +492,8 @@ class StructureBuilderAgent(BaseAgent):
                                         {json.dumps(chunk, indent=2)}
 
                                         Generate the Markdown content for these sections with proper formatting and structure.
+                                        Place all assets (images, tables, formulas) inline where they belong in the content flow.
+                                        Use only $ and $$ for mathematical formulas, never \( and \).
                                     """)])
                 
                 response = await self.llm.ainvoke(prompt.format_messages())
@@ -350,10 +505,16 @@ class StructureBuilderAgent(BaseAgent):
                 elif chunk_markdown.startswith('```'):
                     chunk_markdown = chunk_markdown[3:-3]
                 
+                # Fix math delimiters - convert LaTeX delimiters to Markdown
+                chunk_markdown = self._fix_math_delimiters(chunk_markdown)
+                
                 markdown_parts.append(chunk_markdown)
             
             # Combine all chunks
             final_markdown = '\n\n'.join(markdown_parts)
+            
+            # Apply final math delimiter fix to entire document
+            final_markdown = self._fix_math_delimiters(final_markdown)
             
             # Add table of contents at the beginning if we have multiple sections
             if len(content_chunks) > 1:
@@ -408,7 +569,7 @@ class StructureBuilderAgent(BaseAgent):
                         if content_item.get('type') == 'code_block':
                             language = content_item.get('language', '')
                             markdown_parts.append(f"```{language}\n{content_item['markdown']}\n```\n")
-                        # Add LaTeX delimiters for math equations
+                        # Add proper math delimiters for math equations
                         elif content_item.get('type') == 'math_equation':
                             markdown_parts.append(f"$$\n{content_item['markdown']}\n$$\n")
                         # Add proper formatting for index entries
@@ -425,7 +586,23 @@ class StructureBuilderAgent(BaseAgent):
                         if content_item['markdown']:
                             markdown_parts.append(f"{content_item['markdown']}\n")
             
-            return '\n'.join(markdown_parts)
+            fallback_markdown = '\n'.join(markdown_parts)
+            # Apply math delimiter fix to fallback content too
+            return self._fix_math_delimiters(fallback_markdown)
+
+    def _fix_math_delimiters(self, text: str) -> str:
+        """Fix LaTeX math delimiters to use Markdown format."""
+        # Convert \( ... \) to $ ... $
+        text = re.sub(r'\\\(([^)]*)\\\)', r'$\1$', text)
+        
+        # Convert \[ ... \] to $$ ... $$
+        text = re.sub(r'\\\[([^]]*)\\\]', r'$$\1$$', text)
+        
+        # Clean up any double delimiters that might have been created
+        text = re.sub(r'\$\$\$+', '$$', text)
+        text = re.sub(r'\$\$\$([^$]+)\$\$\$', r'$$\1$$', text)
+        
+        return text
 
     async def _generate_content_summary(self, content_data: Dict[str, Any]) -> Dict[str, Any]:
         """Generate a summary of the processed content."""
@@ -531,3 +708,28 @@ class StructureBuilderAgent(BaseAgent):
             'sections': sanitized_sections,
             'content_placement': outline.get('content_placement', {})
         }
+    
+    def _estimate_tokens(self, text: str) -> int:
+        """
+        Estimate token count for a text string.
+        Simple heuristic: ~4 characters per token for English text.
+        """
+        # Remove extra whitespace and normalize
+        normalized_text = re.sub(r'\s+', ' ', text.strip())
+        
+        # Rough estimation: 4 characters per token
+        # This is conservative for GPT models
+        estimated_tokens = len(normalized_text) / 4
+        
+        return int(estimated_tokens)
+
+    def _check_token_limit(self, content: str, max_tokens: int = 100000) -> bool:
+        """
+        Check if content exceeds token limit.
+        Uses conservative limit below GPT-4o-mini's 128k context window.
+        """
+        estimated = self._estimate_tokens(content)
+        if estimated > max_tokens:
+            self.logger.warning(f"Content may exceed token limit: {estimated} estimated tokens")
+            return False
+        return True

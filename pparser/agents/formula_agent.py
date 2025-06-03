@@ -1,5 +1,5 @@
 """
-Formula analysis and LaTeX conversion agent
+Formula analysis and Markdown conversion agent
 """
 
 # TODO: the temperature variable i think i will put it into the .env file to be more easy to change
@@ -12,16 +12,21 @@ import re
 from .base import BaseAgent
 from ..extractors import FormulaExtractor
 
+from dotenv import load_dotenv
+load_dotenv()  # Load environment variables from .env file
 
+import os
+
+TEMPERATURE = float(os.getenv('OPENAI_TEMPERATURE', 0.1))  # Default to 0.1 if not set
 class FormulaAnalysisAgent(BaseAgent):
-    """Agent specialized in analyzing and converting mathematical formulas"""
+    """Agent specialized in analyzing and converting mathematical formulas to Markdown"""
     
     def __init__(self, config):
         super().__init__(
             config=config,
             name="FormulaAnalysisAgent",
-            role="Analyze mathematical formulas and convert to LaTeX",
-            temperature=0.1
+            role="Analyze mathematical formulas and convert to Markdown",
+            temperature=TEMPERATURE
         )
         self.extractor = FormulaExtractor()
     
@@ -64,8 +69,8 @@ class FormulaAnalysisAgent(BaseAgent):
             for formula_info in batch:
                 enhanced_formula = formula_info.copy()
                 
-                # Improve LaTeX conversion
-                improved_latex = self._improve_latex_conversion(formula_info)
+                # Improve LaTeX for Markdown conversion
+                improved_latex = self._improve_latex_for_markdown_conversion(formula_info)
                 enhanced_formula['improved_latex'] = improved_latex
                 
                 # Only analyze complex formulas
@@ -102,34 +107,41 @@ class FormulaAnalysisAgent(BaseAgent):
             r'\\begin\{.*\}', r'\\end\{.*\}',
             r'\\left', r'\\right',
             r'\\over', r'\\atop',
-            r'\\binom', r'\\choose'
+            r'\\binom', r'\\choose',
+            r'[∫∬∭]',  # Unicode integrals
+            r'[∑∏]',   # Unicode summation/Product
+            r'[∂∇Δ]',  # Unicode partial derivatives, nabla, delta
+            r'[√∛∜]',  # Unicode roots
+            r'[α-ωΑ-Ω]',  # Greek letters
+            r'\d+/\d+',  # Fractions like 1/2
+            r'\w+_\w+',  # Subscripts like x_1
+            r'\w+\^\w+',  # Superscripts like x^2
+            r'lim|sin|cos|tan|log|ln|exp',  # Functions
+            r'[≠≤≥≈∞]'  # Math symbols
         ]
         
         return any(re.search(pattern, latex) for pattern in complex_patterns)
     
-    def _improve_latex_conversion(self, formula_info: Dict[str, Any]) -> str:
-        """Improve LaTeX conversion using LLM"""
+    def _improve_latex_for_markdown_conversion(self, formula_info: Dict[str, Any]) -> str:
+        """Improve LaTeX for Markdown conversion using LLM"""
         
         original_text = formula_info.get('original', '')
         current_latex = formula_info.get('latex', '')
         
         # If we already have good LaTeX, use it
-        if current_latex and self._is_valid_latex(current_latex):
+        if current_latex and self._is_valid_latex_for_markdown(current_latex):
             return current_latex
         
         # Only use LLM for complex formulas
         if not self._is_complex_formula(original_text):
-            return self._basic_latex_conversion(original_text)
+            return self._basic_latex_for_markdown_conversion(original_text)
         
-        system_prompt = """You are an expert in mathematical notation and LaTeX. Convert this mathematical expression to LaTeX.
-
-Return only the LaTeX code, without surrounding $ or $$ delimiters."""
+        system_prompt = """You are an expert in mathematical notation and LaTeX/Markdown math. Convert this mathematical expression to LaTeX format for use in Markdown.
+                        Use standard LaTeX commands (with single backslashes, not double). Return only the LaTeX math expression, without surrounding $ or $$ delimiters."""
         
-        user_content = f"""Convert this mathematical expression to LaTeX:
-
-Original text: {original_text}
-
-Provide LaTeX code."""
+        user_content = f"""Convert this mathematical expression to LaTeX format for Markdown:
+                            Original text: {original_text}
+                            Provide clean LaTeX notation using single backslashes (e.g., \\frac, \\sqrt, \\sum)."""
         
         messages = self._create_messages(system_prompt, user_content)
         improved_latex = self._invoke_llm(messages)
@@ -139,22 +151,48 @@ Provide LaTeX code."""
         
         return cleaned_latex if cleaned_latex else current_latex
     
-    def _basic_latex_conversion(self, text: str) -> str:
-        """Convert basic mathematical expressions to LaTeX without using LLM."""
-        # Common replacements
+    def _basic_latex_for_markdown_conversion(self, text: str) -> str:
+        """Convert basic mathematical expressions to LaTeX for Markdown without using LLM."""
+        # Common replacements for LaTeX in Markdown
         replacements = {
             '^2': '^{2}',
             '^3': '^{3}',
-            'sqrt': '\\sqrt',
-            'inf': '\\infty',
-            'alpha': '\\alpha',
-            'beta': '\\beta',
-            'gamma': '\\gamma',
-            'delta': '\\delta',
-            'theta': '\\theta',
-            'pi': '\\pi',
-            'sigma': '\\sigma',
-            'omega': '\\omega'
+            '^4': '^{4}',
+            '^5': '^{5}',
+            '^6': '^{6}',
+            '^7': '^{7}',
+            '^8': '^{8}',
+            '^9': '^{9}',
+            '^0': '^{0}',
+            '^1': '^{1}',
+            'sqrt': r'\sqrt',
+            'inf': r'\infty',
+            'infinity': r'\infty',
+            'alpha': r'\alpha',
+            'beta': r'\beta',
+            'gamma': r'\gamma',
+            'delta': r'\delta',
+            'theta': r'\theta',
+            'pi': r'\pi',
+            'sigma': r'\sigma',
+            'omega': r'\omega',
+            'lambda': r'\lambda',
+            'mu': r'\mu',
+            'epsilon': r'\epsilon',
+            '+-': r'\pm',
+            '<=': r'\leq',
+            '>=': r'\geq',
+            '!=': r'\neq',
+            '~=': r'\approx',
+            'sum': r'\sum',
+            'integral': r'\int',
+            'partial': r'\partial',
+            'nabla': r'\nabla',
+            'in': r'\in',
+            'subset': r'\subset',
+            'superset': r'\supset',
+            'union': r'\cup',
+            'intersection': r'\cap'
         }
         
         latex = text
@@ -163,21 +201,30 @@ Provide LaTeX code."""
         
         return latex
     
-    def _is_valid_latex(self, latex: str) -> bool:
-        """Check if LaTeX is valid and well-formed."""
+    def _is_valid_latex_for_markdown(self, latex: str) -> bool:
+        """Check if Markdown math (LaTeX) is valid and well-formed."""
         # Basic validation
         if not latex:
             return False
             
-        # Check for common LaTeX patterns
+        # Check for common LaTeX/mathematical patterns in Markdown
         valid_patterns = [
-            r'\\[a-zA-Z]+',  # LaTeX commands
+            r'\\[a-zA-Z]+',  # LaTeX commands like \frac, \sqrt
             r'\{[^}]*\}',    # Braced groups
             r'\[[^\]]*\]',   # Square brackets
             r'\([^)]*\)',    # Parentheses
-            r'[a-zA-Z0-9]',  # Alphanumeric
-            r'[+\-*/=]',     # Basic operators
-            r'[α-ωΑ-Ω]'      # Greek letters
+            r'[α-ωΑ-Ω]',     # Greek letters
+            r'[∫∬∭]',        # Unicode integrals
+            r'[∑∏]',         # Unicode summation/Product
+            r'[√∛∜]',        # Unicode roots
+            r'[²³⁴⁵⁶⁷⁸⁹⁰¹]', # Superscripts
+            r'[₀₁₂₃₄₅₆₇₈₉]', # Subscripts
+            r'[≠≤≥≈∞±∂∇Δ]',  # Math symbols
+            r'[a-zA-Z0-9]',   # Alphanumeric
+            r'[+\-*/=(){}[\]]', # Basic operators and brackets
+            r'\d+/\d+',       # Fractions
+            r'\w+_\w+',       # Subscripts
+            r'\w+\^\w+'       # Superscripts
         ]
         
         return any(re.search(pattern, latex) for pattern in valid_patterns)
@@ -239,20 +286,29 @@ Provide a clear explanation."""
         return explanation.strip() if explanation else "Mathematical expression"
     
     def _clean_latex_response(self, latex_response: str) -> str:
-        """Clean LLM LaTeX response"""
+        """Clean LLM LaTeX response for Markdown"""
         
         # Remove surrounding delimiters if present
         latex = latex_response.strip()
         
-        # Remove $...$ or $$...$$ delimiters
+        # Remove $...$ or $$...$$ delimiters if present
         if latex.startswith('$$') and latex.endswith('$$'):
             latex = latex[2:-2]
         elif latex.startswith('$') and latex.endswith('$'):
             latex = latex[1:-1]
         
-        # Remove \begin{equation} and \end{equation} if present
-        if '\\begin{equation}' in latex:
-            latex = latex.replace('\\begin{equation}', '').replace('\\end{equation}', '')
+        # Remove any LaTeX-specific commands that might have leaked in
+        latex_commands = [
+            r'\\begin\{equation\}', r'\\end\{equation\}',
+            r'\\begin\{align\}', r'\\end\{align\}',
+            r'\\begin\{math\}', r'\\end\{math\}'
+        ]
+        
+        for cmd in latex_commands:
+            latex = re.sub(cmd, '', latex)
+        
+        # Convert double backslashes to single backslashes for Markdown
+        latex = re.sub(r'\\\\([a-zA-Z]+)', r'\\\1', latex)
         
         return latex.strip()
     
@@ -287,8 +343,9 @@ Provide a clear explanation."""
 class FormulaFormattingAgent(BaseAgent):
     """Agent specialized in formatting formulas for Markdown"""
     
-    def __init__(self):
+    def __init__(self, config=None):
         super().__init__(
+            config=config,
             name="FormulaFormattingAgent",
             role="Format mathematical formulas for Markdown output",
             temperature=0.0
@@ -322,18 +379,19 @@ class FormulaFormattingAgent(BaseAgent):
     def _format_formula_for_markdown(self, formula: Dict[str, Any]) -> Dict[str, Any]:
         """Format a single formula for Markdown"""
         
-        latex = formula.get('improved_latex', formula.get('latex', ''))
+        latex_math = formula.get('improved_latex', formula.get('latex', ''))
         formula_type = formula.get('type', 'inline')
         explanation = formula.get('explanation', '')
         
         formatted_formula = formula.copy()
         
-        # Format for Markdown
+        # Format for Markdown with proper delimiters
         if formula_type == 'inline':
-            formatted_formula['markdown'] = f"${latex}$"
+            # For inline formulas, wrap with single dollar signs
+            formatted_formula['markdown'] = f"${latex_math}$"
         else:
-            # Block formula
-            formatted_formula['markdown'] = f"$$\n{latex}\n$$"
+            # Block formula - wrap with double dollar signs and add line breaks
+            formatted_formula['markdown'] = f"$$\n{latex_math}\n$$"
             
             # Add explanation if available
             if explanation:

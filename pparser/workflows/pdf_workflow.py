@@ -1,10 +1,3 @@
-"""
-PDF processing workflow using LangGraph for multiagent orchestration.
-
-This module implements the main PDF to Markdown conversion workflow using LangGraph
-to coordinate various specialized agents and extractors.
-"""
-
 # TODO: i have to implement / correct the iterative markdown validation and construction 
 
 from typing import Dict, Any, List, Optional, TypedDict
@@ -28,7 +21,6 @@ from ..agents import (
 )
 
 logger = get_logger(__name__)
-
 
 class WorkflowState(TypedDict):
     """State object for the PDF processing workflow."""
@@ -372,6 +364,7 @@ class PDFWorkflow:
         
         return state
 
+    # TODO: FIX the the markdown final build, right now is building with a crappy structure
     async def _assemble_markdown(self, state: WorkflowState) -> WorkflowState:
         """Assemble the final Markdown document from all processed content."""
         self.logger.info("Assembling final Markdown")
@@ -383,8 +376,8 @@ class PDFWorkflow:
             # Add document header
             pdf_name = Path(state['pdf_path']).stem
             markdown_parts.append(f"# {pdf_name}")
-            markdown_parts.append(f"*Converted from PDF using PPARSER*")
-            markdown_parts.append("")  # Empty line
+            markdown_parts.append(f"*Converted from PDF using PPARSER*") # the water mark :D
+            markdown_parts.append("")
             
             # Process content in a single pass to avoid duplicates
             content_sections = []

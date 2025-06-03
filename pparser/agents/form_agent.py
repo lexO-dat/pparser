@@ -10,6 +10,14 @@ from pathlib import Path
 from .base import BaseAgent
 from ..extractors import FormExtractor
 
+from dotenv import load_dotenv
+import os
+
+# see if the env file was successfully loaded
+if not load_dotenv():
+    print("Warning: .env file not found or could not be loaded. Default values will be used.")
+
+TEMPERATURE = float(os.getenv('TEMPERATURE', 0.7))  # Default temperature if not set in .env
 
 class FormAnalysisAgent(BaseAgent):
     """Agent specialized in analyzing forms and survey questions"""
@@ -19,7 +27,7 @@ class FormAnalysisAgent(BaseAgent):
             config=config,
             name="FormAnalysisAgent",
             role="Analyze forms and convert to interactive Markdown",
-            temperature=0.1 # * calling .env
+            temperature=TEMPERATURE
         )
         self.extractor = FormExtractor()
     

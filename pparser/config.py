@@ -12,15 +12,14 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-
+"""Configuration class for PPARSER system"""
 @dataclass
 class Config:
-    """Configuration class for PPARSER system"""
     
     # OpenAI settings
     openai_api_key: str = ""
     openai_model: str = "gpt-4o-mini"
-    openai_temperature: float = 0.1
+    openai_temperature: float = 0.7
     openai_max_tokens: int = 4096
     
     # Processing settings
@@ -50,6 +49,7 @@ class Config:
                  log_file: str = None,
                  temp_dir: str = None,
                  output_dir: str = None):
+        
         """Initialize config with optional parameters, falling back to environment variables"""
         
         # OpenAI settings with fallbacks

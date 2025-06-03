@@ -22,14 +22,14 @@ logger = get_logger(__name__)
 
 async def demo_system_status():
     """Demonstrate system status and configuration."""
-    print("🤖 PPARSER - Multiagent PDF to Markdown Converter")
+    print("PPARSER - Multiagent PDF to Markdown Converter")
     print("=" * 60)
-    print(f"📦 Version: {__version__}")
+    print(f"Version: {__version__}")
     print()
     
     # Load configuration
     config = Config()
-    print("⚙️  Configuration:")
+    print("Configuration:")
     print(f"   • OpenAI Model: {config.openai_model}")
     print(f"   • Temperature: {config.openai_temperature}")
     print(f"   • Max Tokens: {config.openai_max_tokens}")
@@ -38,7 +38,7 @@ async def demo_system_status():
     print(f"   • Output Format: {config.output_format}")
     print()
     
-    print("🔧 System Components:")
+    print("System Components:")
     
     # Test imports
     try:
@@ -46,27 +46,27 @@ async def demo_system_status():
             TextExtractor, ImageExtractor, TableExtractor, 
             FormulaExtractor, FormExtractor
         )
-        print("   ✅ Content Extractors loaded successfully")
+        print("   Content Extractors loaded successfully")
         
         from pparser.agents import (
             TextAnalysisAgent, ImageAnalysisAgent, TableAnalysisAgent,
             FormulaAnalysisAgent, FormAnalysisAgent, StructureBuilderAgent,
             QualityValidatorAgent
         )
-        print("   ✅ LLM Agents loaded successfully")
+        print("   LLM Agents loaded successfully")
         
         from pparser.workflows import PDFWorkflow, BatchWorkflow
-        print("   ✅ LangGraph Workflows loaded successfully")
+        print("   LangGraph Workflows loaded successfully")
         
         from pparser.processors import PDFProcessor, BatchProcessor
-        print("   ✅ Main Processors loaded successfully")
+        print("   Main Processors loaded successfully")
         
     except Exception as e:
-        print(f"   ❌ Import error: {e}")
+        print(f"   Import error: {e}")
         return False
     
     print()
-    print("🚀 System Status: All components loaded successfully!")
+    print("System Status: All components loaded successfully!")
     print()
     
     # Demonstrate workflow visualization
@@ -74,7 +74,7 @@ async def demo_system_status():
         from pparser.processors import PDFProcessor
         processor = PDFProcessor(config)
         
-        print("📊 Workflow Visualization:")
+        print("Workflow Visualization:")
         print("-" * 30)
         workflow_viz = processor.get_workflow_visualization()
         print("Mermaid diagram generated successfully")
@@ -82,9 +82,9 @@ async def demo_system_status():
         print()
         
     except Exception as e:
-        print(f"   ⚠️  Workflow visualization error: {e}")
+        print(f"   Workflow visualization error: {e}")
     
-    print("🔍 Available CLI Commands:")
+    print("Available CLI Commands:")
     print("   • python -m pparser single <pdf> -o <output>")
     print("   • python -m pparser batch <input_dir> -o <output_dir>")
     print("   • python -m pparser filelist <list.txt> -o <output_dir>")
@@ -97,7 +97,7 @@ async def demo_system_status():
 
 async def demo_workflow_creation():
     """Demonstrate workflow creation without processing."""
-    print("🔄 Workflow Architecture:")
+    print("Workflow Architecture:")
     print("-" * 30)
     
     try:
@@ -107,7 +107,7 @@ async def demo_workflow_creation():
         # Create a workflow instance
         workflow = PDFWorkflow()
         
-        print("   ✅ PDF Workflow created")
+        print("   PDF Workflow created")
         print(f"   • Nodes: {len(workflow.workflow.nodes) if hasattr(workflow.workflow, 'nodes') else 'N/A'}")
         print("   • Processing stages: Extract → Analyze → Build → Validate")
         print()
@@ -126,7 +126,7 @@ async def demo_workflow_creation():
         print()
         
     except Exception as e:
-        print(f"   ❌ Workflow creation error: {e}")
+        print(f"   Workflow creation error: {e}")
 
 
 def main():
@@ -144,7 +144,7 @@ def main():
         if result:
             asyncio.run(demo_workflow_creation())
             
-            print("✨ Demonstration completed successfully!")
+            print("Demonstration completed successfully!")
             print()
             print("Next steps:")
             print("1. Prepare PDF files for processing")
@@ -154,7 +154,7 @@ def main():
             print()
             
         else:
-            print("❌ System validation failed")
+            print("System validation failed")
             return 1
             
     except Exception as e:

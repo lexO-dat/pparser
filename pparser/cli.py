@@ -282,18 +282,18 @@ Examples:
                 return 1
             
             # Print results
-            print(f"\n✅ Processing completed successfully!")
-            print(f"📁 Output directory: {result['output_directory']}")
-            print(f"⏱️  Processing time: {result['processing_time']:.2f} seconds")
-            print(f"📊 Quality score: {result['quality_score']:.1f}/100")
+            print(f"\nProcessing completed successfully!")
+            print(f"Output directory: {result['output_directory']}")
+            print(f"Processing time: {result['processing_time']:.2f} seconds")
+            print(f"Quality score: {result['quality_score']:.1f}/100")
             
             if result.get('output_files'):
-                print("\n📄 Generated files:")
+                print("\nGenerated files:")
                 for file_type, file_path in result['output_files'].items():
                     print(f"  • {file_type}: {Path(file_path).name}")
             
             if result.get('errors'):
-                print(f"\n⚠️  Warnings: {len(result['errors'])}")
+                print(f"\nWarnings: {len(result['errors'])}")
                 for error in result['errors'][:3]:  # Show first 3 errors
                     print(f"  • {error}")
             
@@ -341,23 +341,23 @@ Examples:
                 return 1
             
             # Print results summary
-            print(f"\n✅ Batch processing completed!")
-            print(f"📁 Output directory: {result['output_directory']}")
-            print(f"📊 Results: {result['successful']}/{result['total_files']} successful ({result['summary']['success_rate']:.1f}%)")
-            print(f"⏱️  Total time: {result['processing_time']:.2f} seconds")
+            print(f"\nBatch processing completed!")
+            print(f"Output directory: {result['output_directory']}")
+            print(f"Results: {result['successful']}/{result['total_files']} successful ({result['summary']['success_rate']:.1f}%)")
+            print(f"Total time: {result['processing_time']:.2f} seconds")
             
             if 'quality_statistics' in result:
                 stats = result['quality_statistics']
-                print(f"🎯 Quality: {stats['average_score']:.1f}/100 average")
+                print(f"Quality: {stats['average_score']:.1f}/100 average")
                 print(f"   • High quality (≥80): {stats['high_quality_count']}")
                 print(f"   • Acceptable (60-79): {stats['acceptable_quality_count']}")
                 print(f"   • Low quality (<60): {stats['low_quality_count']}")
             
             if result.get('report_file'):
-                print(f"📋 Detailed report: {Path(result['report_file']).name}")
+                print(f"Detailed report: {Path(result['report_file']).name}")
             
             if result['failed'] > 0:
-                print(f"\n⚠️  {result['failed']} files failed to process")
+                print(f"\n{result['failed']} files failed to process")
                 if result.get('errors'):
                     print("Common errors:")
                     for error in result['errors'][:5]:  # Show first 5 errors
@@ -404,9 +404,9 @@ Examples:
                 return 1
             
             # Print results (similar to batch processing)
-            print(f"\n✅ File list processing completed!")
-            print(f"📁 Output directory: {result['output_directory']}")
-            print(f"📊 Results: {result['successful']}/{result['total_files']} successful ({result['summary']['success_rate']:.1f}%)")
+            print(f"\nFile list processing completed!")
+            print(f"Output directory: {result['output_directory']}")
+            print(f"Results: {result['successful']}/{result['total_files']} successful ({result['summary']['success_rate']:.1f}%)")
             
             return 0 if result['successful'] > 0 else 1
             
@@ -420,24 +420,24 @@ Examples:
             processor = PDFProcessor(self.config)
             status = processor.get_processing_status()
             
-            print("\n🔧 PPARSER System Status")
+            print("\nPPARSER System Status")
             print("=" * 50)
             
-            print(f"Processor Ready: {'✅' if status['processor_ready'] else '❌'}")
-            print(f"Configuration Loaded: {'✅' if status['config_loaded'] else '❌'}")
-            print(f"Workflow Initialized: {'✅' if status['workflow_initialized'] else '❌'}")
+            print(f"Processor Ready: {'Yes' if status['processor_ready'] else 'No'}")
+            print(f"Configuration Loaded: {'Yes' if status['config_loaded'] else 'No'}")
+            print(f"Workflow Initialized: {'Yes' if status['workflow_initialized'] else 'No'}")
             
             print("\nAgents Status:")
             agents = status['agents_ready']
             for agent_name, ready in agents.items():
-                status_icon = '✅' if ready else '❌'
-                print(f"  • {agent_name.replace('_', ' ').title()}: {status_icon}")
+                status_text = 'Ready' if ready else 'Not Ready'
+                print(f"  • {agent_name.replace('_', ' ').title()}: {status_text}")
             
             print("\nSupported Features:")
             features = status['supported_features']
             for feature_name, supported in features.items():
-                status_icon = '✅' if supported else '❌'
-                print(f"  • {feature_name.replace('_', ' ').title()}: {status_icon}")
+                status_text = 'Supported' if supported else 'Not Supported'
+                print(f"  • {feature_name.replace('_', ' ').title()}: {status_text}")
             
             print("\nConfiguration:")
             print(f"  • LLM Model: {self.config.openai_model}")
@@ -458,7 +458,7 @@ Examples:
             processor = PDFProcessor(self.config)
             mermaid_graph = processor.get_workflow_visualization()
             
-            print("\n🔄 PPARSER Workflow Visualization")
+            print("\nPPARSER Workflow Visualization")
             print("=" * 50)
             print("Mermaid Diagram (copy to https://mermaid.live for visualization):")
             print()

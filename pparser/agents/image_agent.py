@@ -8,8 +8,13 @@ from pathlib import Path
 from .base import BaseAgent
 from ..extractors import ImageExtractor
 
+from dotenv import load_dotenv
+import os
+
 # TODO: This agent is sort of implemented ( i recicled some code of other proyect ) but 4o-mini i think that does not do image analysis so is a little useless right now
 # TODO: the temperature variable i think i will put it into the .env file to be more easy to change
+
+TEMPERATURE = float(os.getenv('TEMPERATURE', 0.3))  # Default temperature if not set in .env
 
 class ImageAnalysisAgent(BaseAgent):
     """Agent specialized in analyzing images and generating descriptions"""
@@ -19,7 +24,7 @@ class ImageAnalysisAgent(BaseAgent):
             config=config,
             name="ImageAnalysisAgent",
             role="Analyze images and generate descriptive content",
-            temperature=0.3
+            temperature=TEMPERATURE
         )
         self.extractor = ImageExtractor(config=config, output_dir=output_dir)
     

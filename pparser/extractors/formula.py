@@ -22,8 +22,8 @@ class FormulaExtractor(BaseExtractor):
         self.formula_patterns = [
             # LaTeX patterns
             r'\$([^$]+)\$',                    # $formula$
-            r'\\\(([^)]+)\\\)',                # \(formula\)
-            r'\\\[([^\]]+)\\\]',               # \[formula\]
+            # r'\\\(([^)]+)\\\)',                # \(formula\)
+            # r'\\\[([^\]]+)\\\]',               # \[formula\]
             
             # Mathematical symbols and expressions
             r'[a-zA-Z]\s*[=≈≠<>≤≥]\s*[0-9a-zA-Z\+\-\*/\(\)\^\s]+',
@@ -98,15 +98,15 @@ class FormulaExtractor(BaseExtractor):
             # Extract formulas using different methods
             all_formulas = []
             
-            # Method 1: Pattern-based extraction
+            # Pattern-based extraction
             pattern_formulas = self._extract_with_patterns(text_content)
             all_formulas.extend(pattern_formulas)
-            
-            # Method 2: Context-based extraction
+
+            # Context-based extraction
             context_formulas = self._extract_with_context(text_content)
             all_formulas.extend(context_formulas)
-            
-            # Method 3: Symbol density analysis
+
+            # Symbol density analysis
             density_formulas = self._extract_with_symbol_density(text_content)
             all_formulas.extend(density_formulas)
             
@@ -414,16 +414,16 @@ class FormulaExtractor(BaseExtractor):
         
         descriptions = []
         
-        if '\\frac' in latex_formula:
+        if '\frac' in latex_formula:
             descriptions.append("fraction")
         
-        if '\\sqrt' in latex_formula:
+        if '\sqrt' in latex_formula:
             descriptions.append("square root")
         
-        if '\\int' in latex_formula:
+        if '\int' in latex_formula:
             descriptions.append("integral")
         
-        if '\\sum' in latex_formula:
+        if '\sum' in latex_formula:
             descriptions.append("summation")
         
         if '^' in latex_formula:

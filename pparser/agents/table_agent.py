@@ -17,7 +17,7 @@ class TableAnalysisAgent(BaseAgent):
             config=config,
             name="TableAnalysisAgent",
             role="Analyze and format tables for Markdown conversion",
-            temperature=0.1
+            temperature=0.7
         )
         self.extractor = TableExtractor(config=config, output_dir=output_dir)
     
